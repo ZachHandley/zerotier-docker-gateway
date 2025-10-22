@@ -8,6 +8,12 @@ services:
       - SYS_ADMIN
     devices:
       - /dev/net/tun
+    healthcheck:
+      test: ["CMD", "sh", "-c", "docker network inspect zmesh >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     ports:
       - "80:80"
       - "443:443"
@@ -15,15 +21,15 @@ services:
     environment:
       # SSL Configuration (default: HTTP-only)
       - SSL_ENABLED=${SSL_ENABLED:-false}
-      - URL=${URL:-example.com}
-      - EMAIL=${EMAIL:-}
+      - URL=${DOMAIN:-yourdomain.com}
+      - EMAIL=${EMAIL:-admin@yourdomain.com}
 
       # ZeroTier Configuration (required)
-      - NETWORK_ID=${NETWORK_ID:-}
+      - NETWORK_ID=${NETWORK_ID}
 
       # Nginx reverse proxy endpoints
       # Format: service1:port1,service2:port2,service3:port3
-      - ENDPOINTS=${ENDPOINTS:-wordpress:80}
+      # - ENDPOINTS=service1:80
 
       # Optional domains (one per endpoint in same order)
       # - DOMAINS=example.com,api.example.com,grafana.example.com
@@ -49,6 +55,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock  # Required for network creation/cleanup
       # Optional: Mount ZeroTier identity for persistence
       # - ./zerotier-identity:/var/lib/zerotier-one
+    networks:
+      - zmesh
+
+networks:
+  zmesh:
+    external: true
 
 volumes:
   swag_config:

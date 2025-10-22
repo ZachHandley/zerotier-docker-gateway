@@ -13,94 +13,42 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      # SWAG Environment Variables
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
+      # SSL Configuration (default: HTTP-only)
+      - SSL_ENABLED=${SSL_ENABLED:-false}
       - URL=${URL:-example.com}
-      - VALIDATION=${VALIDATION:-http}
-      - SUBDOMAINS=${SUBDOMAINS:-www,}
       - EMAIL=${EMAIL:-}
-      - ONLY_SUBDOMAINS=${ONLY_SUBDOMAINS:-false}
-      - EXTRA_DOMAINS=${EXTRA_DOMAINS:-}
-      - STAGING=${STAGING:-false}
 
-      # ZeroTier configuration
+      # ZeroTier Configuration (required)
       - NETWORK_ID=${NETWORK_ID:-}
 
       # Nginx reverse proxy endpoints
       # Format: service1:port1,service2:port2,service3:port3
-      - ENDPOINTS=wordpress:80,api:3000,grafana:3001
+      - ENDPOINTS=${ENDPOINTS:-wordpress:80}
 
       # Optional domains (one per endpoint in same order)
       # - DOMAINS=example.com,api.example.com,grafana.example.com
+
+      # Network Configuration
+      - ZMESH_NETWORK_NAME=${ZMESH_NETWORK_NAME:-zmesh}
+      - ZMESH_SUBNET=${ZMESH_SUBNET:-10.69.42.0/24}
+      - ZMESH_BRIDGE_NAME=${ZMESH_BRIDGE_NAME:-br-zmesh}
+      - ZMESH_GATEWAY_IP=${ZMESH_GATEWAY_IP:-10.69.42.1}
+      - ZMESH_AUTO_CLEANUP=${ZMESH_AUTO_CLEANUP:-true}
+
+      # Additional SWAG environment variables (only used when SSL_ENABLED=true)
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - VALIDATION=${VALIDATION:-http}
+      - SUBDOMAINS=${SUBDOMAINS:-www,}
+      - ONLY_SUBDOMAINS=${ONLY_SUBDOMAINS:-false}
+      - EXTRA_DOMAINS=${EXTRA_DOMAINS:-}
+      - STAGING=${STAGING:-false}
     volumes:
       - swag_config:/config
+      - /var/run/docker.sock:/var/run/docker.sock  # Required for network creation/cleanup
       # Optional: Mount ZeroTier identity for persistence
       # - ./zerotier-identity:/var/lib/zerotier-one
-    depends_on:
-      - wordpress
-      - api
-      - grafana
-    networks:
-      - backend
-
-  # Example backend services
-  wordpress:
-    image: wordpress:latest
-    container_name: wordpress
-    restart: unless-stopped
-    environment:
-      - WORDPRESS_DB_HOST=db:3306
-      - WORDPRESS_DB_USER=wordpress
-      - WORDPRESS_DB_PASSWORD=wordpress
-      - WORDPRESS_DB_NAME=wordpress
-    volumes:
-      - wordpress_data:/var/www/html
-    networks:
-      - backend
-
-  api:
-    image: nginx:alpine
-    container_name: api
-    restart: unless-stopped
-    command: >
-      sh -c "echo 'API Server listening on port 3000' > /usr/share/nginx/html/index.html &&
-             nginx -g 'daemon off;'"
-    networks:
-      - backend
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    restart: unless-stopped
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-    networks:
-      - backend
-
-  db:
-    image: mysql:5.7
-    container_name: mysql
-    restart: unless-stopped
-    environment:
-      - MYSQL_DATABASE=wordpress
-      - MYSQL_USER=wordpress
-      - MYSQL_PASSWORD=wordpress
-      - MYSQL_ROOT_PASSWORD=root
-    volumes:
-      - db_data:/var/lib/mysql
-    networks:
-      - backend
 
 volumes:
   swag_config:
-  wordpress_data:
-  grafana_data:
-  db_data:
-
-networks:
-  backend:
-    driver: bridge

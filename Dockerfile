@@ -6,8 +6,8 @@ RUN apt-get update && apt-get install -y curl gnupg debian-keyring debian-archiv
 # Add ZeroTier repository and install ZeroTier
 RUN curl -s https://install.zerotier.com | bash
 
-# Install Nginx and Certbot (SWAG-style)
-RUN apt-get update && apt-get install -y nginx certbot python3-certbot-nginx fail2ban && rm -rf /var/lib/apt/lists/*
+# Install Docker CLI, Nginx and Certbot (SWAG-style)
+RUN apt-get update && apt-get install -y docker.io nginx certbot python3-certbot-nginx fail2ban && rm -rf /var/lib/apt/lists/*
 
 # Create SWAG-style directory structure
 RUN mkdir -p /config/nginx/site-confs /config/nginx/proxy-confs /config/ssl /config/dns-conf /var/lib/zerotier-one

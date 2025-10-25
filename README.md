@@ -1,307 +1,353 @@
-# ZeroTier SWAG Gateway
+# ZeroTier Docker Gateway
 
-A single Docker image that combines ZeroTier network connectivity with SWAG-style Nginx reverse proxy functionality. Automatically generates reverse proxy configurations from environment variables and joins ZeroTier networks on startup.
+Two Docker images for seamless ZeroTier integration with Docker services.
 
 Created by Zach Handley - [zachhandley@gmail.com](mailto:zachhandley@gmail.com) | [GitHub](https://github.com/ZachHandley) | [Website](https://zachhandley.com)
 
-## Features
+## Images
 
-- **ZeroTier Integration**: Automatically joins ZeroTier networks for secure connectivity
-- **Nginx Reverse Proxy**: SWAG-style reverse proxy with SSL support
-- **Auto-Configuration**: Generates Nginx configs from simple environment variables
-- **SSL Automation**: Let's Encrypt certificate management (via Certbot)
-- **Single Image**: No complex multi-container setups required
-- **Docker Network Support**: Service discovery via Docker networking
+### 1. Gateway (`zerotier-docker-gateway`)
+Routes ZeroTier traffic to Docker containers with Caddy reverse proxy
+
+**Base:** `bfg100k/zerotier-gateway` (Alpine Linux)
+**Size:** 62.7 MB (84% smaller than original 400MB SWAG build)
+
+### 2. CoreDNS (`zerotier-docker-gateway-dns`)
+Automatic DNS discovery for ZeroTier nodes
+
+**Base:** `coredns/coredns`
+**Features:** Auto-discovers ZeroTier nodes, serves `.zmesh` DNS
+
+## Architecture
+
+```
+Server A (Control):
+├── CoreDNS Container
+│   └── Auto-discovers: <nodename>.zmesh → <zerotier-ip>
+├── Nginx Proxy Manager
+│   └── Routes: public.domain.com → service.zmesh
+└── Other control services
+
+Server B+ (Workload):
+├── Gateway Container
+│   ├── ZeroTier IP: 10.147.17.x
+│   ├── Routes: ZT ↔ Docker network
+│   └── Caddy: Proxies to containers
+├── WordPress (or any service)
+├── Database
+└── Other services
+```
+
+---
 
 ## Quick Start
 
-### HTTP-Only (Default)
+### Gateway (Deploy on Workload Servers)
+
 ```bash
-docker compose up -d
+# 1. Copy example files
+cd gateway/
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env
+
+# 2. Configure .env
+SITE_NAME=mysite
+NETWORK_ID=your_zerotier_network_id
+ENDPOINTS=wordpress:80
+
+# 3. Start
+docker-compose up -d
+
+# 4. Get ZeroTier IP
+docker exec mysite-gateway zerotier-cli listnetworks
+# Note the IP (e.g., 10.147.17.5)
 ```
 
-### With SSL/HTTPS
+### CoreDNS (Deploy on Control Server)
+
 ```bash
-SSL_ENABLED=true URL=yourdomain.com EMAIL=admin@yourdomain.com docker compose up -d
+# 1. Copy example files
+cd coredns/
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env
+
+# 2. Configure .env
+ZEROTIER_API_KEY=your_api_key_from_my.zerotier.com
+NETWORK_ID=your_zerotier_network_id
+
+# 3. Start
+docker-compose up -d
+
+# 4. Test DNS
+dig @127.0.0.1 -p 5353 mysite-gateway.zmesh
 ```
 
-### Stop and Cleanup
-```bash
-# Stop services (network cleanup happens automatically)
-docker compose down
+---
 
-# Stop services without network cleanup
-ZMESH_AUTO_CLEANUP=false docker compose down
-```
+## Gateway Configuration
 
-### Single Command Deployment
-The gateway now automatically creates its Docker network on startup, so no bootstrap files or multiple compose commands are needed!
+### Environment Variables
 
-## Environment Variables
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NETWORK_IDS` | Yes | - | ZeroTier network ID(s), semicolon-separated |
+| `GATEWAY_MODE` | Yes | - | `inbound` (ZT→Docker), `outbound` (Docker→ZT), `both` |
+| `ENDPOINTS` | No | `wordpress:80` | Services to proxy: `service:port,service2:port2` |
+| `DOMAINS` | No | - | Custom domains per endpoint (comma-separated) |
+| `SSL_ENABLED` | No | `false` | Enable HTTPS (requires public domain) |
+| `URL` | No | - | Domain for SSL |
+| `EMAIL` | No | - | Email for ACME registration |
 
-### SSL Configuration
-- `SSL_ENABLED=false` - Enable SSL/HTTPS features (default: false)
-- `URL=example.com` - Domain for SSL certificates (required when SSL_ENABLED=true)
-- `EMAIL=admin@example.com` - Email for Let's Encrypt certificates (required when SSL_ENABLED=true)
+### Example docker-compose.yml
 
-### ZeroTier Configuration
-- `NETWORK_ID` - ZeroTier network ID to join (required)
-
-### Network Configuration
-- `ZMESH_NETWORK_NAME=zmesh` - Docker network name for container communication
-- `ZMESH_SUBNET=10.69.42.0/24` - Network subnet for the zmesh bridge
-- `ZMESH_BRIDGE_NAME=br-zmesh` - Bridge interface name on the host
-- `ZMESH_GATEWAY_IP=10.69.42.1` - Gateway IP for the bridge network
-- `ZMESH_AUTO_CLEANUP=true` - Automatically cleanup network on shutdown
-
-### Reverse Proxy Configuration
-- `ENDPOINTS` - Comma-separated list of services to proxy (format: `service1:port1,service2:port2`)
-- `DOMAINS` - Optional comma-separated list of domains (one per endpoint, in same order)
-
-### Additional SWAG Variables (only used when SSL_ENABLED=true)
-- `PUID=1000` - User ID for permissions
-- `PGID=1000` - Group ID for permissions
-- `TZ=Etc/UTC` - Timezone
-- `VALIDATION=http` - Certbot validation method (http or dns)
-- `SUBDOMAINS=www,` - Subdomains for SSL certificate
-- `ONLY_SUBDOMAINS=false` - Only get certs for subdomains
-- `EXTRA_DOMAINS=` - Additional domains for certificate
-- `STAGING=false` - Use Let's Encrypt staging environment
-
-## Examples
-
-### HTTP-Only Gateway (Default Behavior)
 ```yaml
-# .env file
-NETWORK_ID=1234567890abcdef
-ENDPOINTS=wordpress:80,api:3000
-# SSL_ENABLED is false by default
-```
-
-### SSL/HTTPS Gateway
-```yaml
-# .env file
-NETWORK_ID=1234567890abcdef
-ENDPOINTS=wordpress:80,api:3000
-SSL_ENABLED=true
-URL=example.com
-EMAIL=admin@example.com
-```
-
-### Multiple Services with Custom Domains (SSL)
-```yaml
-# .env file
-NETWORK_ID=1234567890abcdef
-ENDPOINTS=wordpress:80,api:3000,grafana:3001
-DOMAINS=blog.example.com,api.example.com,grafana.example.com
-SSL_ENABLED=true
-URL=example.com
-EMAIL=admin@example.com
-```
-
-### Complete Setup Example
-```bash
-# Create .env file with your configuration
-cat > .env << EOF
-# ZeroTier Configuration
-NETWORK_ID=1234567890abcdef
-
-# Service Configuration
-ENDPOINTS=wordpress:80,api:3000
-
-# SSL Configuration (optional)
-SSL_ENABLED=false
-# SSL_ENABLED=true
-# URL=example.com
-# EMAIL=admin@example.com
-
-# Network Configuration (optional)
-ZMESH_NETWORK_NAME=zmesh
-ZMESH_SUBNET=10.69.42.0/24
-ZMESH_BRIDGE_NAME=br-zmesh
-ZMESH_GATEWAY_IP=10.69.42.1
-ZMESH_AUTO_CLEANUP=true
-EOF
-
-# Start the gateway (creates network automatically)
-docker compose up -d
-
-# Stop with automatic network cleanup
-docker compose down
-
-# Check network status
-docker network ls | grep zmesh
-docker network inspect zmesh
-```
-
-### Adding Additional Services
-```yaml
-# docker-compose.override.yml
 version: '3.8'
 
 services:
   wordpress:
     image: wordpress:latest
-    container_name: wordpress
-    restart: unless-stopped
-    environment:
-      - WORDPRESS_DB_HOST=db:3306
-      - WORDPRESS_DB_USER=wordpress
-      - WORDPRESS_DB_PASSWORD=wordpress
-      - WORDPRESS_DB_NAME=wordpress
-    volumes:
-      - wordpress_data:/var/www/html
+    container_name: mysite-wp
     networks:
-      - zmesh
+      - internal
+    # ... wordpress config
 
   db:
-    image: mysql:5.7
-    container_name: mysql
-    restart: unless-stopped
-    environment:
-      - MYSQL_DATABASE=wordpress
-      - MYSQL_USER=wordpress
-      - MYSQL_PASSWORD=wordpress
-      - MYSQL_ROOT_PASSWORD=root
-    volumes:
-      - db_data:/var/lib/mysql
+    image: mariadb:10.6
     networks:
-      - zmesh
+      - internal
+    # ... db config
+
+  gateway:
+    image: ghcr.io/zachhandley/zerotier-docker-gateway:latest
+    container_name: mysite-gateway
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - NETWORK_IDS=${NETWORK_ID}
+      - GATEWAY_MODE=inbound
+      - ENDPOINTS=wordpress:80
+    volumes:
+      - zt_data:/var/lib/zerotier-one
+      - caddy_data:/data/caddy
+    networks:
+      - internal
+
+networks:
+  internal:
+    name: mysite_internal
 
 volumes:
-  wordpress_data:
-  db_data:
-
-# Usage:
-# docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+  zt_data:
+  caddy_data:
 ```
+
+---
+
+## CoreDNS Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ZEROTIER_API_KEY` | Yes | - | API key from my.zerotier.com/account |
+| `NETWORK_ID` | Yes | - | ZeroTier network ID to monitor |
+| `ZTNET_URL` | No | `https://my.zerotier.com` | ZTNet URL if self-hosted |
+
+### Example docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  coredns:
+    image: ghcr.io/zachhandley/zerotier-docker-gateway-dns:latest
+    container_name: zerotier-dns
+    privileged: true  # For host DNS configuration
+    ports:
+      - "5353:53/udp"  # systemd-resolved uses 53
+      - "5353:53/tcp"
+    environment:
+      - ZEROTIER_API_KEY=${ZEROTIER_API_KEY}
+      - NETWORK_ID=${NETWORK_ID}
+    volumes:
+      - dns_data:/data
+      - /etc/systemd:/host/systemd
+      - /proc:/proc:ro
+
+volumes:
+  dns_data:
+```
+
+---
+
+## ZeroTier Central Setup
+
+### 1. Approve Gateway Nodes
+
+1. Go to https://my.zerotier.com
+2. Select your network
+3. Find gateway nodes (e.g., `mysite-gateway`)
+4. Check "Authorized"
+
+### 2. Add Managed Route (CRITICAL)
+
+**In network settings → Managed Routes:**
+
+Add route: `10.0.0.0/8` via `<gateway-zerotier-ip>`
+
+This tells all ZeroTier clients to route Docker traffic through the gateway.
+
+### 3. Note Assigned IPs
+
+Gateways get IPs like `10.147.17.5`, `10.243.29.8`, etc.
+
+---
+
+## Usage Patterns
+
+### Single Service per Gateway
+
+Each project gets its own isolated network and gateway:
+
+```bash
+project-wp/
+├── docker-compose.yml  # WordPress + DB + Gateway
+└── .env               # SITE_NAME=mysite
+
+project-grafana/
+├── docker-compose.yml  # Grafana + Prometheus + Gateway
+└── .env               # SITE_NAME=monitoring
+```
+
+### Multiple Endpoints in One Gateway
+
+```yaml
+gateway:
+  environment:
+    - ENDPOINTS=wordpress:80,phpmyadmin:80,grafana:3000
+    - DOMAINS=wp.zmesh,pma.zmesh,grafana.zmesh
+```
+
+---
 
 ## How It Works
 
-1. **Network Bootstrap**: Gateway automatically creates the Docker bridge network if it doesn't exist
-2. **ZeroTier**: ZeroTier daemon starts and joins the specified network
-3. **ZeroTier IP Display**: Shows the assigned ZeroTier IP for DNS configuration
-4. **SSL Check**: Evaluates `SSL_ENABLED` - if true, generates Let's Encrypt certificates
-5. **Config Generation**: Parses `ENDPOINTS` environment variable and generates Nginx reverse proxy configurations (HTTP or HTTPS based on SSL_ENABLED)
-6. **Validation**: Validates Nginx configuration before starting
-7. **Nginx Start**: Starts Nginx with generated configurations
-8. **Cleanup**: On shutdown, automatically cleans up the managed network if no other containers are using it
+### Gateway Flow
 
-### Network Architecture
-```
-┌─────────────────────────────────────┐
-│           Host Machine              │
-│  ┌─────────────────────────────────┐│
-│  │    zmesh (10.69.42.0/24)       ││
-│  │  ┌─────┐  ┌─────┐  ┌─────┐     ││
-│  │  │Gateway│ │ WP  │ │ DB  │     ││ ← All containers communicate here
-│  │  └─────┘  └─────┘  └─────┘     ││
-│  └─────────────────────────────────┘│
-│  br-zmesh interface (10.69.42.1)    │
-│                                     │
-│  ZeroTier Interface (zt0)           │ ◄── External ZeroTier access
-│  IP: 10.147.20.x                   │
-└─────────────────────────────────────┘
-```
+1. Joins ZeroTier network (gets IP like 10.147.17.5)
+2. Configures iptables routing between ZT ↔ Docker network
+3. Generates Caddyfile from `ENDPOINTS`
+4. Starts Caddy to proxy HTTP requests
 
-### SSL Behavior
-- **SSL_ENABLED=false (default)**: HTTP-only reverse proxy configurations
-- **SSL_ENABLED=true**: Full HTTPS setup with SSL certificates, HTTP→HTTPS redirects, and security headers
+### CoreDNS Flow
 
-### Network Cleanup
-- **ZMESH_AUTO_CLEANUP=true (default)**: Automatically removes the network when gateway shuts down
-- **Safety checks**: Only cleans up if no other containers are connected to the network
-- **Managed networks**: Only removes networks created with the `zmesh-managed` label
+1. Polls ZeroTier API every 60s
+2. Finds authorized nodes with names
+3. Generates zone file: `<nodename>.zmesh IN A <zerotier-ip>`
+4. Reloads CoreDNS every 15s
+5. On first run: Configures host systemd-resolved to forward `.zmesh` → `127.0.0.1:5353`
 
-## Generated Configuration Files
-
-The container automatically generates Nginx configuration files in `/config/nginx/proxy-confs/`:
+### End-to-End Request
 
 ```
-/config/nginx/proxy-confs/
-├── wordpress.conf
-├── api.conf
-└── grafana.conf
+User → NPM (Server A)
+  ↓
+Route: blog.example.com → wp-mysite.zmesh
+  ↓
+CoreDNS: wp-mysite.zmesh → 10.147.17.5
+  ↓
+ZeroTier network routes to gateway
+  ↓
+Gateway iptables: ZT → Docker network
+  ↓
+Caddy: Reverse proxy to wordpress:80
+  ↓
+WordPress responds
 ```
 
-Each generated configuration includes proper headers for reverse proxying:
-- Host header preservation
-- Real IP forwarding
-- SSL protocol information
-- X-Forwarded headers
+---
 
-## Docker Capabilities Required
+## Building from Source
 
-The container requires the following Docker capabilities for ZeroTier functionality:
-- `--cap-add=NET_ADMIN` - Network administration
-- `--cap-add=SYS_ADMIN` - System administration
-- `--device=/dev/net/tun` - TUN device access
-
-## Volume Structure
-
-```
-/config/
-├── nginx/
-│   ├── site-confs/     # Main site configurations
-│   └── proxy-confs/    # Auto-generated reverse proxy configs
-├── ssl/                # SSL certificates
-├── dns-conf/           # DNS validation configurations
-└── letsencrypt/        # Let's Encrypt data
-```
-
-## Building From Source
+### Gateway
 
 ```bash
-git clone https://github.com/ZachHandley/zerotier-caddy-gateway.git
-cd zerotier-caddy-gateway
-docker build -t zerotier-swag-gateway .
+cd gateway/
+docker build -t zerotier-docker-gateway:latest .
 ```
+
+### CoreDNS
+
+```bash
+cd coredns/
+docker build -t zerotier-docker-gateway-dns:latest .
+```
+
+---
 
 ## Troubleshooting
 
-### ZeroTier Issues
-- Ensure the container has the required capabilities (`NET_ADMIN`, `SYS_ADMIN`, `/dev/net/tun`)
-- Verify the ZeroTier network ID is correct
-- Check that the network is configured to allow new members
-- Container will display ZeroTier IP information on startup - use this for DNS configuration
+### Gateway Issues
 
-### SSL Certificate Issues
-- Ensure port 80 is accessible for HTTP validation (required for Let's Encrypt)
-- Verify the domain names resolve to your server's public IP
-- Check DNS settings for the domains
-- Ensure `SSL_ENABLED=true` with both `URL` and `EMAIL` set correctly
-- Container will fall back to HTTP-only mode if SSL generation fails
+**Won't connect to ZeroTier:**
+```bash
+docker exec <gateway> zerotier-cli status
+docker exec <gateway> zerotier-cli listnetworks
+docker logs <gateway>
+```
 
-### Proxy Configuration Issues
-- Verify backend services are accessible from the container
-- Check Docker network connectivity
-- Review generated configuration files in `/config/nginx/proxy-confs`
-- Container validates Nginx configuration before starting and will exit if invalid
+**Can't reach services:**
+```bash
+# Test direct access
+curl http://<zerotier-ip>
 
-### SSL Not Working?
-- Check container logs for SSL certificate generation status
-- Verify `SSL_ENABLED=true` is set and required variables (URL, EMAIL) are provided
-- Ensure domain resolves correctly and port 80 is open for Let's Encrypt validation
+# Check iptables
+docker exec <gateway> iptables -L -n -v
 
-### Network Issues?
-- Check if zmesh network exists: `docker network ls | grep zmesh`
-- Verify network settings: `docker network inspect zmesh`
-- Check gateway container logs: `docker logs zerotier-swag-gateway`
-- Manual network cleanup: `docker network rm zmesh` (if needed)
-- Check container connectivity: `docker exec zerotier-swag-gateway ping wordpress`
+# Verify services on same network
+docker network inspect <project>_internal
+```
 
-### Network Cleanup Not Working?
-- Check if other containers are using the network: `docker network inspect zmesh --format '{{len .Containers}}'`
-- Verify network has zmesh-managed label: `docker network inspect zmesh --format '{{.Labels}}'`
-- Force cleanup: `ZMESH_AUTO_CLEANUP=true docker compose down`
+### CoreDNS Issues
+
+**Not resolving:**
+```bash
+# Test directly
+dig @127.0.0.1 -p 5353 mysite-gateway.zmesh
+
+# Check zone file
+docker exec zerotier-dns cat /data/zmesh.db
+
+# View logs
+docker logs zerotier-dns
+```
+
+**systemd-resolved not configured:**
+```bash
+# Check configuration
+cat /etc/systemd/resolved.conf.d/zmesh.conf
+
+# Manually restart
+systemctl restart systemd-resolved
+
+# Test resolution
+resolvectl query mysite-gateway.zmesh
+```
+
+---
 
 ## License
 
-This project is open source. Please refer to the LICENSE file for details.
+MIT
 
-## Support
+## Credits
 
-Created by Zach Handley
-- Email: [zachhandley@gmail.com](mailto:zachhandley@gmail.com)
-- GitHub: [ZachHandley](https://github.com/ZachHandley)
-- Website: [zachhandley.com](https://zachhandley.com)
+- Based on [bfg100k/zerotier-gateway](https://hub.docker.com/r/bfg100k/zerotier-gateway)
+- Uses [Caddy](https://caddyserver.com/) for reverse proxying
+- Uses [CoreDNS](https://coredns.io/) for DNS

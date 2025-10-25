@@ -1,0 +1,13 @@
+.:53 {
+    forward . 1.1.1.1 8.8.8.8
+    log
+    errors
+    cache 30
+}
+
+zmesh:53 {
+    file /data/zmesh.db
+    log
+    errors
+    reload 15s
+}

@@ -1,48 +1,138 @@
 # ZeroTier Docker Gateway
 
-Two Docker images for seamless ZeroTier integration with Docker services.
+A simple, DNS-based mesh networking solution for Docker services. No manual routes, no configuration overhead - just join and access by name.
 
-Created by Zach Handley - [zachhandley@gmail.com](mailto:zachhandley@gmail.com) | [GitHub](https://github.com/ZachHandley) | [Website](https://zachhandley.com)
+Created by Zach Handley - [GitHub](https://github.com/ZachHandley) | [Website](https://zachhandley.com)
+
+## What is This?
+
+A complete mesh networking stack that lets you:
+- Access Docker services across servers by name (e.g., `wordpress.zmesh`)
+- Automatic service discovery - no manual IP management
+- Zero manual route configuration - ZeroTier handles routing automatically
+- Deploy gateways in minutes with Docker Compose
 
 ## Images
 
 ### 1. Gateway (`zerotier-docker-gateway`)
-Routes ZeroTier traffic to Docker containers with Caddy reverse proxy
+Exposes Docker services on ZeroTier network via Caddy reverse proxy
 
 **Base:** `bfg100k/zerotier-gateway` (Alpine Linux)
 **Size:** 62.7 MB (84% smaller than original 400MB SWAG build)
 
 ### 2. CoreDNS (`zerotier-docker-gateway-dns`)
-Automatic DNS discovery for ZeroTier nodes
+Automatic DNS discovery for all ZeroTier members
 
 **Base:** `coredns/coredns`
-**Features:** Auto-discovers ZeroTier nodes, serves `.zmesh` DNS
+**Features:** Auto-discovers authorized members every 60s, serves `.zmesh` DNS
 
 ## Architecture
 
 ```
-Server A (Control):
+Server A (Controller + DNS):
+├── ZeroTier Controller (ZTNet)
+│   └── Manages network, authorizes members
 ├── CoreDNS Container
-│   └── Auto-discovers: <nodename>.zmesh → <zerotier-ip>
-├── Nginx Proxy Manager
+│   ├── Auto-discovers authorized members every 60s
+│   └── Serves DNS: <hostname>.zmesh → <zerotier-ip>
+├── Nginx Proxy Manager (optional)
 │   └── Routes: public.domain.com → service.zmesh
 └── Other control services
 
-Server B+ (Workload):
+Server B+ (Workload Gateways):
 ├── Gateway Container
-│   ├── ZeroTier IP: 10.147.17.x
-│   ├── Routes: ZT ↔ Docker network
-│   └── Caddy: Proxies to containers
+│   ├── Joins ZeroTier network (gets IP automatically)
+│   ├── Hostname: Discoverable via DNS
+│   └── Caddy: Reverse proxy to Docker services
 ├── WordPress (or any service)
 ├── Database
 └── Other services
+
+Clients:
+└── Set DNS to Server A's ZeroTier IP
+    └── Access services: mysite.zmesh, db.zmesh, etc.
 ```
+
+## How It Works
+
+1. **Server A** runs ZeroTier Controller + CoreDNS
+2. **Gateways** join the network and expose services via Caddy
+3. **CoreDNS** discovers all authorized members automatically
+4. **Clients** point DNS to Server A and access services by name
+5. **ZeroTier** handles all routing automatically between members
+
+**No manual routes needed!** ZeroTier automatically routes traffic between authorized members.
+
+---
+
+## Key Benefits
+
+### DNS-Based Access
+- Access services by name: `mysite.zmesh`, `db.zmesh`, `grafana.zmesh`
+- No IP management - CoreDNS auto-discovers everything
+- Changes propagate automatically (60s polling interval)
+
+### Zero Configuration Routing
+- No manual route management in ZeroTier Central
+- No subnet calculations or network planning
+- ZeroTier handles all routing between authorized members automatically
+- Just authorize members and they can communicate
+
+### Simple Deployment
+- One command to deploy a gateway
+- Automatic service discovery
+- Works across any number of servers
+- Scales horizontally with zero configuration changes
+
+### Architecture Simplification
+**Old approach (complex):**
+- Manual route entries for each gateway's Docker subnet
+- IP tracking and documentation
+- Route conflicts and debugging
+- Subnet planning and coordination
+
+**New approach (simple):**
+- Deploy gateway with `SITE_NAME` and `NETWORK_ID`
+- Authorize in ZTNet
+- Access via `<SITE_NAME>.zmesh`
+- Done!
 
 ---
 
 ## Quick Start
 
-### Gateway (Deploy on Workload Servers)
+### Step 1: Deploy Controller + CoreDNS (Server A)
+
+First, set up the ZeroTier network controller and DNS server:
+
+```bash
+# 1. Deploy ZTNet (ZeroTier Controller)
+# Follow: https://github.com/sinamics/ztnet
+# Create a network and note the NETWORK_ID
+
+# 2. CRITICAL: Create the 'public' Docker network first
+docker network create public
+
+# 3. Deploy CoreDNS
+cd coredns/
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env
+
+# Edit .env:
+ZEROTIER_API_KEY=your_api_key_from_ztnet
+NETWORK_ID=your_network_id
+
+# Start CoreDNS
+docker-compose up -d
+
+# 4. Note Server A's ZeroTier IP
+docker exec zerotier-dns zerotier-cli listnetworks
+# Example: 10.147.17.1
+```
+
+### Step 2: Deploy Gateways (Server B+)
+
+Deploy gateways on each workload server:
 
 ```bash
 # 1. Copy example files
@@ -51,35 +141,55 @@ cp docker-compose.example.yml docker-compose.yml
 cp .env.example .env
 
 # 2. Configure .env
-SITE_NAME=mysite
-NETWORK_ID=your_zerotier_network_id
-ENDPOINTS=wordpress:80
+SITE_NAME=mysite              # Becomes mysite.zmesh
+NETWORK_ID=your_network_id
+ENDPOINTS=wordpress:80        # Services to expose
 
-# 3. Start
+# 3. Start gateway
 docker-compose up -d
 
-# 4. Get ZeroTier IP
-docker exec mysite-gateway zerotier-cli listnetworks
-# Note the IP (e.g., 10.147.17.5)
+# 4. Authorize in ZTNet
+# Go to ZTNet web UI → Network → Members
+# Find "mysite" and click "Authorize"
 ```
 
-### CoreDNS (Deploy on Control Server)
+### Step 3: Configure Clients
+
+Point your DNS to Server A's ZeroTier IP:
+
+**Linux:**
+```bash
+# Edit /etc/systemd/resolved.conf
+[Resolve]
+DNS=10.147.17.1  # Server A's ZeroTier IP
+Domains=~zmesh
+
+sudo systemctl restart systemd-resolved
+```
+
+**macOS:**
+```bash
+# System Preferences → Network → Advanced → DNS
+# Add: 10.147.17.1
+```
+
+**Windows:**
+```powershell
+# Network Settings → DNS Settings
+# Add: 10.147.17.1
+```
+
+### Step 4: Access Services
 
 ```bash
-# 1. Copy example files
-cd coredns/
-cp docker-compose.example.yml docker-compose.yml
-cp .env.example .env
+# Test DNS resolution
+dig mysite.zmesh
 
-# 2. Configure .env
-ZEROTIER_API_KEY=your_api_key_from_my.zerotier.com
-NETWORK_ID=your_zerotier_network_id
+# Access service
+curl http://mysite.zmesh
 
-# 3. Start
-docker-compose up -d
-
-# 4. Test DNS
-dig @127.0.0.1 -p 5353 mysite-gateway.zmesh
+# Or in browser
+http://mysite.zmesh
 ```
 
 ---
@@ -90,8 +200,9 @@ dig @127.0.0.1 -p 5353 mysite-gateway.zmesh
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `SITE_NAME` | Yes | - | Hostname for DNS discovery (becomes `<name>.zmesh`) |
 | `NETWORK_IDS` | Yes | - | ZeroTier network ID(s), semicolon-separated |
-| `GATEWAY_MODE` | Yes | - | `inbound` (ZT→Docker), `outbound` (Docker→ZT), `both` |
+| `GATEWAY_MODE` | Yes | `inbound` | `inbound` (ZT→Docker), `outbound` (Docker→ZT), `both` |
 | `ENDPOINTS` | No | `wordpress:80` | Services to proxy: `service:port,service2:port2` |
 | `DOMAINS` | No | - | Custom domains per endpoint (comma-separated) |
 | `SSL_ENABLED` | No | `false` | Enable HTTPS (requires public domain) |
@@ -120,6 +231,7 @@ services:
   gateway:
     image: ghcr.io/zachhandley/zerotier-docker-gateway:latest
     container_name: mysite-gateway
+    hostname: mysite  # Important: Used for DNS discovery
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
@@ -129,6 +241,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
+      - SITE_NAME=${SITE_NAME}
       - NETWORK_IDS=${NETWORK_ID}
       - GATEWAY_MODE=inbound
       - ENDPOINTS=wordpress:80
@@ -146,6 +259,13 @@ volumes:
   zt_data:
   caddy_data:
 ```
+
+**Key Points:**
+
+- `hostname` must match `SITE_NAME` for DNS discovery to work
+- Gateway automatically joins ZeroTier network and gets an IP
+- No manual route configuration needed - ZeroTier routes between members automatically
+- Services are accessed via `<SITE_NAME>.zmesh` domain
 
 ---
 
@@ -186,26 +306,25 @@ volumes:
 
 ---
 
-## ZeroTier Central Setup
+## ZeroTier Network Setup
 
-### 1. Approve Gateway Nodes
+### Authorize Members
 
+After deploying gateways, authorize them in your ZeroTier controller:
+
+**Using ZTNet:**
+1. Open ZTNet web UI
+2. Go to Networks → Select your network → Members
+3. Find each gateway (e.g., "mysite", "db", etc.)
+4. Click "Authorize"
+
+**Using ZeroTier Central:**
 1. Go to https://my.zerotier.com
 2. Select your network
-3. Find gateway nodes (e.g., `mysite-gateway`)
+3. Find gateway nodes under Members
 4. Check "Authorized"
 
-### 2. Add Managed Route (CRITICAL)
-
-**In network settings → Managed Routes:**
-
-Add route: `10.0.0.0/8` via `<gateway-zerotier-ip>`
-
-This tells all ZeroTier clients to route Docker traffic through the gateway.
-
-### 3. Note Assigned IPs
-
-Gateways get IPs like `10.147.17.5`, `10.243.29.8`, etc.
+**That's it!** No route configuration needed. ZeroTier automatically routes traffic between authorized members.
 
 ---
 
@@ -240,33 +359,49 @@ gateway:
 
 ### Gateway Flow
 
-1. Joins ZeroTier network (gets IP like 10.147.17.5)
-2. Configures iptables routing between ZT ↔ Docker network
-3. Generates Caddyfile from `ENDPOINTS`
-4. Starts Caddy to proxy HTTP requests
+1. Gateway joins ZeroTier network
+2. ZeroTier assigns an IP automatically (e.g., 10.147.17.5)
+3. Gateway sets hostname from `SITE_NAME` environment variable
+4. Gateway configures iptables routing between ZT ↔ Docker network
+5. Gateway generates Caddyfile from `ENDPOINTS` and starts Caddy
+6. Ready to serve requests!
 
-### CoreDNS Flow
+### CoreDNS Discovery Flow
 
-1. Polls ZeroTier API every 60s
-2. Finds authorized nodes with names
-3. Generates zone file: `<nodename>.zmesh IN A <zerotier-ip>`
-4. Reloads CoreDNS every 15s
+1. CoreDNS polls ZeroTier API every 60 seconds
+2. Discovers all authorized members with their IPs and hostnames
+3. Generates DNS zone file: `<hostname>.zmesh IN A <zerotier-ip>`
+4. Reloads CoreDNS automatically
 5. On first run: Configures host systemd-resolved to forward `.zmesh` → `127.0.0.1:5353`
 
-### End-to-End Request
+### End-to-End Request Flow
 
+**Direct Access (Client on ZeroTier network):**
 ```
-User → NPM (Server A)
+Client → DNS lookup: mysite.zmesh
   ↓
-Route: blog.example.com → wp-mysite.zmesh
+CoreDNS responds: 10.147.17.5
   ↓
-CoreDNS: wp-mysite.zmesh → 10.147.17.5
+Client → HTTP request to 10.147.17.5
   ↓
-ZeroTier network routes to gateway
+ZeroTier routes to gateway automatically
   ↓
-Gateway iptables: ZT → Docker network
+Gateway Caddy: Reverse proxy to wordpress:80
   ↓
-Caddy: Reverse proxy to wordpress:80
+WordPress responds
+```
+
+**Public Access (via Nginx Proxy Manager):**
+```
+Internet → blog.example.com
+  ↓
+NPM (Server A) → Proxies to mysite.zmesh
+  ↓
+CoreDNS: mysite.zmesh → 10.147.17.5
+  ↓
+ZeroTier routes to gateway
+  ↓
+Gateway Caddy → wordpress:80
   ↓
 WordPress responds
 ```
@@ -295,50 +430,169 @@ docker build -t zerotier-docker-gateway-dns:latest .
 
 ### Gateway Issues
 
-**Won't connect to ZeroTier:**
+**Gateway won't connect to ZeroTier:**
 ```bash
+# Check ZeroTier status
 docker exec <gateway> zerotier-cli status
+
+# List networks and IPs
 docker exec <gateway> zerotier-cli listnetworks
+
+# View gateway logs
 docker logs <gateway>
 ```
 
+**Solution:** Make sure the gateway is authorized in ZTNet/ZeroTier Central.
+
 **Can't reach services:**
 ```bash
-# Test direct access
+# Test DNS resolution first
+dig mysite.zmesh
+
+# Test direct IP access
 curl http://<zerotier-ip>
+
+# Check Caddy is running
+docker exec <gateway> caddy version
 
 # Check iptables
 docker exec <gateway> iptables -L -n -v
 
-# Verify services on same network
+# Verify services on same Docker network
 docker network inspect <project>_internal
 ```
 
+**Solution:** Ensure `ENDPOINTS` is configured correctly and services are on the same Docker network as gateway.
+
 ### CoreDNS Issues
 
-**Not resolving:**
+**DNS not resolving:**
 ```bash
-# Test directly
-dig @127.0.0.1 -p 5353 mysite-gateway.zmesh
+# Test CoreDNS directly (bypass systemd-resolved)
+dig @127.0.0.1 -p 5353 mysite.zmesh
 
-# Check zone file
+# Check if zone file has entries
 docker exec zerotier-dns cat /data/zmesh.db
 
-# View logs
+# View CoreDNS logs
 docker logs zerotier-dns
+
+# Check if members are authorized
+# (CoreDNS only discovers AUTHORIZED members)
 ```
 
-**systemd-resolved not configured:**
+**Solution:** Make sure gateways are authorized in ZTNet and have hostnames set.
+
+**systemd-resolved not forwarding .zmesh queries:**
 ```bash
-# Check configuration
+# Check if zmesh config exists
 cat /etc/systemd/resolved.conf.d/zmesh.conf
 
-# Manually restart
-systemctl restart systemd-resolved
+# Should show:
+# [Resolve]
+# DNS=127.0.0.1:5353
+# Domains=~zmesh
+
+# Restart resolver
+sudo systemctl restart systemd-resolved
 
 # Test resolution
-resolvectl query mysite-gateway.zmesh
+resolvectl query mysite.zmesh
 ```
+
+**Solution:** Restart CoreDNS container - it auto-configures systemd-resolved on first run.
+
+### Common Issues
+
+**"No route to host" when accessing .zmesh domains:**
+
+This means ZeroTier routing is working (DNS resolved), but gateway isn't reachable.
+
+Check:
+1. Is gateway authorized in ZTNet?
+2. Is client on the ZeroTier network?
+3. Is gateway container running?
+
+```bash
+# On client machine, verify ZeroTier connection
+zerotier-cli listnetworks
+
+# Should show ONLINE and an IP assigned
+```
+
+**DNS resolves but HTTP times out:**
+
+Gateway is reachable but Caddy isn't proxying correctly.
+
+Check:
+1. Is `ENDPOINTS` configured?
+2. Are backend services running?
+3. Are backend services on same Docker network?
+
+```bash
+# Check Caddy config
+docker exec <gateway> cat /etc/caddy/Caddyfile
+
+# Test backend directly from gateway
+docker exec <gateway> wget -O- http://wordpress:80
+```
+
+---
+
+## Frequently Asked Questions
+
+### Do I need to configure routes in ZeroTier Central?
+
+**No!** ZeroTier automatically routes traffic between all authorized members. You only need to:
+1. Deploy gateway
+2. Authorize in ZTNet
+3. Access via DNS
+
+The old approach required manual route entries for each gateway's Docker subnet. That's completely eliminated now.
+
+### How does DNS discovery work?
+
+CoreDNS polls the ZeroTier API every 60 seconds and discovers all authorized members that have a hostname set. It automatically generates DNS records:
+
+```
+mysite.zmesh    → 10.147.17.5
+database.zmesh  → 10.147.17.8
+grafana.zmesh   → 10.147.17.12
+```
+
+### What if I add a new gateway?
+
+Just deploy it with a unique `SITE_NAME` and authorize it in ZTNet. Within 60 seconds, CoreDNS will discover it and create the DNS record. No other configuration needed.
+
+### Can I use this with ZeroTier Central (not ZTNet)?
+
+Yes! The architecture works with both:
+- **ZTNet (self-hosted)**: Full control, recommended for production
+- **ZeroTier Central (my.zerotier.com)**: Easier to get started, cloud-hosted
+
+Just set the API key from your chosen platform.
+
+### What happens if Server A (DNS) goes down?
+
+You can still access services by IP if you know them. Or deploy a secondary CoreDNS instance on another server with the same configuration for redundancy.
+
+### Do all gateways need to be on different servers?
+
+No! You can run multiple gateways on the same server. Each gets its own ZeroTier IP and unique hostname. Just make sure they use different port mappings or run on different Docker networks.
+
+### How do I expose services to the public internet?
+
+Use Nginx Proxy Manager (or any reverse proxy) on Server A:
+1. Point DNS `blog.example.com` to Server A's public IP
+2. In NPM, create proxy host: `blog.example.com` → `http://mysite.zmesh`
+3. NPM resolves via CoreDNS, routes over ZeroTier to gateway
+
+### Can clients outside the ZeroTier network access services?
+
+Not directly - they need to either:
+1. Join the ZeroTier network as a client
+2. Access via public reverse proxy (NPM) on Server A
+3. Use ZeroTier's network bridging features
 
 ---
 

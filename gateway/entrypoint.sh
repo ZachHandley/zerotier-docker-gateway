@@ -47,6 +47,35 @@ done
 zerotier-cli info
 zerotier-cli listnetworks
 
+# Detect ZeroTier IP for Caddy to bind to
+echo "Detecting ZeroTier IP address..."
+ZT_IP=$(zerotier-cli listnetworks | grep OK | awk '{print $9}' | cut -d'/' -f1)
+
+if [ -z "$ZT_IP" ]; then
+    echo "ERROR: Could not detect ZeroTier IP address"
+    echo "Network may not be fully ready or authorized"
+    exit 1
+fi
+
+echo "ZeroTier IP detected: $ZT_IP"
+export ZT_IP
+
+# Display DNS setup instructions
+echo ""
+echo "========================================="
+echo "Gateway Configuration:"
+echo "  Service: ${SITE_NAME}.zmesh"
+echo "  ZeroTier IP: ${ZT_IP}"
+echo ""
+echo "Client Setup (choose one):"
+echo "  1. Add to /etc/hosts:"
+echo "     ${ZT_IP}  ${SITE_NAME}.zmesh"
+echo ""
+echo "  2. Use CoreDNS on Server A (auto-discovery)"
+echo "  3. Use zt2hosts.sh for auto-discovery"
+echo "========================================="
+echo ""
+
 # Generate Caddyfile from environment variables
 echo "Generating Caddy configuration..."
 /usr/local/bin/generate-caddyfile.sh

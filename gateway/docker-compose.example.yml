@@ -47,6 +47,9 @@ services:
       - "80:80"
       - "443:443"
     environment:
+      # Site identification (used for DNS-based service discovery)
+      - SITE_NAME=${SITE_NAME}
+
       # ZeroTier Configuration
       # The gateway will get an IP like 10.147.17.5 from ZeroTier
       - NETWORK_IDS=${NETWORK_ID}

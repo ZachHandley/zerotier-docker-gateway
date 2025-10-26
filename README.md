@@ -138,7 +138,7 @@ First, set up the ZeroTier network controller and DNS server:
 ```bash
 # 1. Create required Docker networks (one-time setup)
 cd zerotier-controller/
-docker compose run --rm zerotier-controller create-networks
+docker compose run --rm znetwork-creator
 
 # 2. Deploy ZTNet + CoreDNS stack
 cp .env.example .env
@@ -166,7 +166,7 @@ The zerotier-controller uses `network_mode: host` and cannot join Docker network
 **Pre-Deploy Setup:**
 ```bash
 cd zerotier-controller/
-docker compose run --rm zerotier-controller create-networks
+docker compose run --rm znetwork-creator
 ```
 
 This creates:
@@ -179,7 +179,7 @@ This creates:
 3. Networks must exist **before** the stack starts, since the controller can't create them automatically
 4. Once created, networks persist and only need to be created once
 
-**For Komodo users:** Add `docker compose run --rm zerotier-controller create-networks` as a pre-deploy command in your stack configuration.
+**For Komodo users:** Add `docker compose run --rm znetwork-creator` as a pre-deploy command in your stack configuration.
 
 **Networks created:**
 

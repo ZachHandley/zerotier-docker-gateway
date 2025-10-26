@@ -62,7 +62,7 @@ The `create-networks` script solves this by:
 
 **For Komodo users:** Add this as a pre-deploy command in your stack configuration:
 ```bash
-docker compose run --rm zerotier-controller create-networks
+docker compose run --rm znetwork-creator
 ```
 
 **Important:** Run the `create-networks` script **before** deploying the stack or other stacks that depend on these networks. Networks only need to be created once and will persist across stack restarts.
@@ -149,7 +149,7 @@ Edit `.env` and set:
 Before deploying the stack, create the required Docker networks:
 
 ```bash
-docker compose run --rm zerotier-controller create-networks
+docker compose run --rm znetwork-creator
 ```
 
 This creates `zmesh-internal` and `zmesh-network` with proper configuration. **This step is required** because the controller uses `network_mode: host` and cannot join Docker networks, so Docker Compose cannot auto-create them.
@@ -252,7 +252,7 @@ Now clients can access gateways by name: `curl http://mysite.zmesh`
 ## Setup Flow Summary
 
 ```
-1. Configure .env → 2. Create networks (docker compose run --rm zerotier-controller create-networks)
+1. Configure .env → 2. Create networks (docker compose run --rm znetwork-creator)
      ↓
 3. Launch stack (docker compose up -d)
      ↓

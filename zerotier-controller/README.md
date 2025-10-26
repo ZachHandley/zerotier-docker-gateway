@@ -2,6 +2,49 @@
 
 Self-hosted ZeroTier network controller with ZTNet web UI and automatic DNS discovery via CoreDNS.
 
+## Docker Networks
+
+This controller automatically creates **two** Docker networks on Server A:
+
+### 1. `zmesh-internal` (172.31.255.0/24)
+**Purpose:** Internal service communication and DNS resolution
+
+**What's on it:**
+- CoreDNS (static IP: 172.31.255.69)
+- postgres, ztnet, dns-updater
+- Any service that needs DNS resolution for `.zmesh` domains
+
+**When to join:**
+- Your service needs to resolve `.zmesh` domain names
+- Your service needs to access internal stack services (postgres, ztnet)
+
+**Example:** Nginx Proxy Manager needs this for DNS lookups
+
+### 2. `zmesh-network` (br-zmesh bridge)
+**Purpose:** ZeroTier routing - direct access to ZeroTier network IPs
+
+**What's on it:**
+- Bridge interface `br-zmesh` connected to ZeroTier routing
+- Services that need to send/receive traffic to ZeroTier IPs
+
+**When to join:**
+- Your service needs to route traffic to ZeroTier member IPs
+- Your service should be accessible from ZeroTier members
+
+**Example:** Nginx Proxy Manager needs this to route to resolved IPs
+
+### Typical Usage Pattern
+
+Most services on Server A that proxy to ZeroTier services need **BOTH** networks:
+
+```yaml
+services:
+  nginx-proxy-manager:
+    networks:
+      - zmesh-internal  # DNS: Resolve service.zmesh → 10.x.x.x
+      - zmesh-network   # Routing: Send traffic to 10.x.x.x
+```
+
 ## zmesh-network Auto-Routing
 
 This custom ZeroTier controller image automatically creates and manages a Docker network called `zmesh-network` that provides seamless ZeroTier access to any container that joins it.
@@ -125,7 +168,7 @@ CoreDNS will now automatically discover all authorized network members and serve
 
 ### 7. Configure DNS for Other Services on Server A
 
-CoreDNS runs on **both** the `app-network` (with static IP `172.31.255.2`) and the `public` network. This allows any service on Server A to use CoreDNS for `.zmesh` service discovery.
+CoreDNS runs on **both** the `zmesh-internal` network (with static IP `172.31.255.69`) and the `public` network. This allows any service on Server A to use CoreDNS for `.zmesh` service discovery.
 
 To configure other services on Server A to use CoreDNS, add DNS configuration to their `docker-compose.yml`:
 
@@ -134,17 +177,17 @@ services:
   your-proxy-service:
     # ... other config ...
     networks:
-      - app-network
+      - zmesh-internal
     dns:
+      - 172.31.255.69   # CoreDNS for .zmesh resolution
       - 127.0.0.11      # Docker's internal DNS (for container name resolution)
-      - 172.31.255.2    # CoreDNS for .zmesh resolution
       - 1.1.1.1         # Fallback for public internet DNS queries
 ```
 
 **How it works:**
-- Any service connected to `app-network` can reach CoreDNS at `172.31.255.2`
-- Docker's DNS (`127.0.0.11`) handles container name resolution
+- Any service connected to `zmesh-internal` can reach CoreDNS at `172.31.255.69`
 - CoreDNS handles all `.zmesh` domain queries (ZeroTier member names)
+- Docker's DNS (`127.0.0.11`) handles container name resolution
 - Fallback DNS (`1.1.1.1` or `8.8.8.8`) handles public internet domains
 
 This enables **DNS-based service discovery** - services on Server A can access ZeroTier network members by name without knowing their IPs.
@@ -210,7 +253,7 @@ This stack provides automatic DNS service discovery for your ZeroTier network:
 **ztNET can't connect to controller:**
 - Verify `ZT_SECRET` matches the authtoken.secret from the container
 - Check that `ZT_ADDR=http://zerotier-controller:9993` is correct
-- Ensure both containers are on the same `app-network`
+- Ensure both containers are on the same `zmesh-internal` network
 
 **Can't access web UI:**
 - Check that port 3000 is exposed

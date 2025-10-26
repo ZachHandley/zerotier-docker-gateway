@@ -15,10 +15,12 @@ A complete mesh networking stack that lets you:
 ## Images
 
 ### 1. Controller (`zerotier-router-zmesh`)
-ZeroTier controller with automatic `zmesh-network` bridge creation (Server A only)
+ZeroTier controller with automatic Docker network creation (Server A only)
 
 **Base:** `zyclonite/zerotier:router`
-**Features:** Auto-creates `zmesh-network` Docker bridge, routes local services ↔ ZeroTier
+**Features:**
+- Auto-creates `zmesh-internal` (172.31.255.0/24) for DNS & internal services
+- Auto-creates `zmesh-network` (br-zmesh bridge) for ZeroTier routing
 
 ### 2. Gateway (`zerotier-docker-gateway`)
 Exposes Docker services on ZeroTier network via Caddy reverse proxy
@@ -38,18 +40,23 @@ Automatic DNS discovery for all ZeroTier members
 Server A (Controller + DNS):
 ├── ZeroTier Controller (Custom Image)
 │   ├── Manages network, authorizes members
-│   ├── Auto-creates zmesh-network Docker bridge
+│   ├── Auto-creates zmesh-internal (172.31.255.0/24)
+│   ├── Auto-creates zmesh-network (br-zmesh bridge)
 │   └── Routes zmesh-network ↔ ZeroTier automatically
-├── CoreDNS Container
-│   ├── Auto-discovers authorized members every 60s
-│   ├── Serves DNS: <hostname>.zmesh → <zerotier-ip>
-│   └── Static IP: 172.31.255.69 (for DNS queries)
+├── zmesh-internal Network
+│   ├── CoreDNS (static IP: 172.31.255.69)
+│   ├── postgres, ztnet, dns-updater
+│   └── Purpose: DNS resolution & internal services
+├── zmesh-network Network
+│   ├── br-zmesh bridge → ZeroTier routing
+│   └── Purpose: Route traffic to ZeroTier IPs
 ├── Nginx Proxy Manager (optional)
-│   ├── Joins zmesh-network for ZeroTier access
-│   ├── Uses CoreDNS (172.31.255.69) for .zmesh resolution
+│   ├── On zmesh-internal → DNS resolution
+│   ├── On zmesh-network → ZeroTier routing
 │   └── Routes: public.domain.com → service.zmesh
-└── Other control services
-    └── Can join zmesh-network for ZeroTier access
+└── Other services needing ZeroTier
+    ├── Join zmesh-internal for DNS
+    └── Join zmesh-network for routing
 
 Server B+ (Workload Gateways):
 ├── Gateway Container
@@ -68,8 +75,9 @@ Clients:
 ## How It Works
 
 1. **Server A** runs ZeroTier Controller + CoreDNS
-   - Controller auto-creates `zmesh-network` Docker bridge for local service access
-   - Services on Server A join `zmesh-network` → instant ZeroTier routing
+   - Controller auto-creates `zmesh-internal` (172.31.255.0/24) for DNS & internal services
+   - Controller auto-creates `zmesh-network` (br-zmesh) for ZeroTier routing
+   - Services join both networks → instant DNS + routing
 2. **Gateways** (Server B+) join the network and expose services via Caddy
 3. **CoreDNS** discovers all authorized members automatically
 4. **Clients** point DNS to Server A and access services by name
@@ -77,6 +85,7 @@ Clients:
 
 **No manual routes needed!**
 - ZeroTier automatically routes traffic between authorized members
+- Server A services get automatic DNS via `zmesh-internal` network
 - Server A services get automatic routing via `zmesh-network` bridge
 - No iptables configuration, no subnet planning, just join and access!
 
@@ -94,7 +103,9 @@ Clients:
 - No subnet calculations or network planning
 - ZeroTier handles all routing between authorized members automatically
 - Just authorize members and they can communicate
-- **Server A**: Auto-created `zmesh-network` bridge for instant local service routing
+- **Server A**: Auto-created networks for instant DNS + routing
+  - `zmesh-internal` - DNS resolution via CoreDNS
+  - `zmesh-network` - Traffic routing via br-zmesh bridge
 - **Server B+**: Gateway containers handle routing automatically
 
 ### Simple Deployment
@@ -150,14 +161,18 @@ docker exec zerotier-controller zerotier-cli listnetworks
 # Example: 10.147.17.1
 ```
 
-**Server A Auto-Routing Feature:**
+**Server A Auto-Network Creation:**
 
-The zerotier-controller uses a **custom image that automatically creates and manages the `zmesh-network`** Docker bridge. This enables services running on Server A to access the ZeroTier network without manual routing configuration.
+The zerotier-controller uses a **custom image that automatically creates two Docker networks** on startup:
 
-**How it works:**
-1. On startup, the controller automatically creates a Docker network named `zmesh-network` with bridge `br-zmesh`
-2. Any service on Server A that joins `zmesh-network` gets automatic routing to the ZeroTier network
-3. No manual iptables rules or route configuration needed!
+**1. `zmesh-internal` (172.31.255.0/24)** - Internal service communication
+- CoreDNS static IP: 172.31.255.69
+- For DNS resolution and internal stack services
+- Join this if your service needs to resolve `.zmesh` domains
+
+**2. `zmesh-network` (br-zmesh bridge)** - ZeroTier routing
+- Bridge interface for ZeroTier network access
+- Join this if your service needs to send/receive ZeroTier traffic
 
 **Example: Nginx Proxy Manager accessing ZeroTier services**
 
@@ -167,26 +182,34 @@ services:
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:latest
     networks:
-      - public
-      - zmesh-network  # Join zmesh-network for ZeroTier access
+      - public          # Internet access
+      - zmesh-internal  # DNS resolution
+      - zmesh-network   # ZeroTier routing
     dns:
-      - 172.31.255.69  # CoreDNS static IP for .zmesh resolution
-      - 1.1.1.1        # Fallback for public DNS
+      - 172.31.255.69   # CoreDNS for .zmesh resolution
+      - 127.0.0.11      # Docker internal DNS
+      - 1.1.1.1         # Fallback for public DNS
     # ... rest of config
 
 networks:
   public:
     external: true
+  zmesh-internal:
+    external: true  # Created by zerotier-controller
   zmesh-network:
     external: true  # Created by zerotier-controller
 ```
 
+**How it works:**
+1. NPM queries DNS → `service.zmesh` resolves to `10.x.x.x` via CoreDNS on zmesh-internal
+2. NPM routes traffic to `10.x.x.x` → routes through zmesh-network → ZeroTier network
+3. No manual iptables or routing configuration needed!
+
 Now NPM can proxy to ZeroTier services by name:
 - Create proxy host: `blog.example.com` → `http://mysite.zmesh`
-- NPM resolves via CoreDNS, routes through zmesh-network bridge → ZeroTier network
-- Automatic, no manual configuration!
+- Fully automatic DNS resolution and routing!
 
-**Important:** This auto-routing feature only applies to **Server A** (where the controller runs). Workload servers (Server B+) use gateways as documented below.
+**Important:** This auto-network feature only applies to **Server A** (where the controller runs). Workload servers (Server B+) use gateways as documented below.
 
 ### Step 2: Deploy Gateways (Server B+)
 
@@ -455,9 +478,9 @@ Internet → blog.example.com
   ↓
 NPM (Server A) → Proxies to mysite.zmesh
   ↓
-CoreDNS: mysite.zmesh → 10.147.17.5
+DNS resolution via zmesh-internal → CoreDNS: mysite.zmesh → 10.147.17.5
   ↓
-NPM routes via zmesh-network bridge → ZeroTier network
+NPM routes traffic via zmesh-network → br-zmesh bridge → ZeroTier network
   ↓
 ZeroTier routes to gateway on Server B
   ↓
@@ -467,10 +490,11 @@ WordPress responds
 ```
 
 **Key difference for Server A services:**
-- NPM joins `zmesh-network` (external Docker network)
-- Controller automatically bridges `zmesh-network` ↔ ZeroTier
+- NPM joins `zmesh-internal` (DNS resolution via CoreDNS)
+- NPM joins `zmesh-network` (ZeroTier routing via br-zmesh)
+- Controller automatically creates both networks
 - No gateway container needed on Server A!
-- Direct access to all ZeroTier members
+- Direct DNS + routing to all ZeroTier members
 
 ---
 
@@ -660,40 +684,58 @@ Not directly - they need to either:
 2. Access via public reverse proxy (NPM) on Server A
 3. Use ZeroTier's network bridging features
 
-### What is zmesh-network and how does it work?
+### What are zmesh-internal and zmesh-network?
 
-`zmesh-network` is a **Server A only** feature that provides automatic ZeroTier routing for local Docker services:
+These are **Server A only** Docker networks automatically created by the zerotier-controller:
+
+**1. `zmesh-internal` (172.31.255.0/24) - DNS & Internal Services**
+
+**Purpose:** DNS resolution and internal service communication
+
+**What's on it:**
+- CoreDNS (static IP: 172.31.255.69)
+- Internal stack services (postgres, ztnet, dns-updater)
+
+**When to join:**
+- Your service needs to resolve `.zmesh` domain names
+- Your service needs to access internal stack services
+
+**2. `zmesh-network` (br-zmesh bridge) - ZeroTier Routing**
+
+**Purpose:** Route traffic to/from ZeroTier network
 
 **How it works:**
-1. The zerotier-controller container creates a Docker network named `zmesh-network` on startup
-2. The Docker bridge is explicitly named `br-zmesh` (predictable name)
-3. Controller adds `br-zmesh` to ZeroTier's physical interfaces list
-4. Any container joining `zmesh-network` can route to/from the ZeroTier network automatically
+1. Controller creates Docker network with predictable bridge name `br-zmesh`
+2. Controller adds `br-zmesh` to ZeroTier's physical interfaces list
+3. Any container joining this network can route to/from ZeroTier automatically
 
-**When to use:**
-- Services running on Server A (controller host) that need ZeroTier access
-- Nginx Proxy Manager proxying to ZeroTier services
-- Local monitoring tools accessing remote services
-- Any Server A service that needs to communicate with ZeroTier members
+**When to join:**
+- Your service needs to send traffic to ZeroTier IPs
+- Your service should be accessible from ZeroTier members
 
-**When NOT to use:**
-- Server B+ (workload servers) - these should use gateway containers instead
-- Services that don't need ZeroTier access at all
-- Services that only serve local/public traffic
+**Typical Pattern - Services need BOTH networks:**
 
-**Example use case:**
 ```yaml
 # Nginx Proxy Manager on Server A
 services:
   nginx-proxy-manager:
     networks:
-      - public          # For internet-facing traffic
-      - zmesh-network   # For ZeroTier service access
+      - public          # Internet access
+      - zmesh-internal  # DNS resolution
+      - zmesh-network   # ZeroTier routing
     dns:
-      - 172.31.255.69   # CoreDNS for .zmesh resolution
+      - 172.31.255.69   # CoreDNS for .zmesh
+      - 127.0.0.11      # Docker internal
+      - 1.1.1.1         # Fallback
 ```
 
-Now NPM can create proxy hosts like `blog.example.com → http://wordpress.zmesh` without any manual routing!
+**Flow:**
+1. NPM receives request for `blog.example.com`
+2. NPM needs to proxy to `http://wordpress.zmesh`
+3. DNS query via `zmesh-internal` → `wordpress.zmesh` = `10.x.x.x`
+4. Traffic routing via `zmesh-network` → reaches ZeroTier IP
+
+**Server B+ note:** These networks are Server A only. Workload servers use gateway containers instead.
 
 ---
 

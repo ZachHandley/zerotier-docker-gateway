@@ -4,7 +4,7 @@ Self-hosted ZeroTier network controller with ZTNet web UI and automatic DNS disc
 
 ## Docker Networks
 
-This stack creates **two** Docker networks automatically via Docker Compose:
+This stack requires **two** Docker networks that must be created **before** deployment using a pre-deploy script:
 
 ### 1. `zmesh-internal` (172.31.255.0/24)
 **Purpose:** Internal service communication and DNS resolution
@@ -33,28 +33,39 @@ This stack creates **two** Docker networks automatically via Docker Compose:
 
 **Example:** Nginx Proxy Manager needs this to route to resolved IPs
 
-### How Network Creation Works
+### Creating Networks (Pre-Deploy)
 
-Networks are created automatically by Docker Compose using the `name:` attribute in the compose file:
+Before starting the stack for the first time, you must create the required Docker networks using the built-in `create-networks` script:
 
-```yaml
-networks:
-  zmesh-internal:
-    name: zmesh-internal
-    driver: bridge
-  zmesh-network:
-    name: zmesh-network
-    driver: bridge
+```bash
+# From the zerotier-controller directory
+docker compose run --rm zerotier-controller create-networks
 ```
 
-**What happens on first boot:**
-1. `docker compose up -d` creates both networks with predictable names
-2. The zerotier-controller entrypoint checks if networks exist
-3. If they exist, it skips manual creation and proceeds with configuration
-4. No manual network creation commands needed
-5. No bootstrap scripts required
+This creates:
+- `zmesh-internal` (172.31.255.0/24) - Internal service communication & DNS
+- `zmesh-network` (br-zmesh bridge) - ZeroTier routing
 
-**Important:** Deploy the zerotier stack **before** other stacks that depend on these networks. This ensures `zmesh-internal` and `zmesh-network` are available when other services try to join them.
+**Why is this required?**
+
+The zerotier-controller uses `network_mode: host` to access the host's network interfaces for ZeroTier routing. Containers using `network_mode: host` cannot join Docker networks, which means:
+
+1. Docker Compose **cannot** automatically create these networks on stack startup
+2. The controller cannot join these networks directly
+3. Networks must exist **before** the stack starts
+
+The `create-networks` script solves this by:
+- Creating both networks with proper configuration
+- Ensuring `br-zmesh` bridge name is predictable for ZeroTier routing
+- Enabling other containers in the stack to join these networks
+- Being idempotent (safe to run multiple times)
+
+**For Komodo users:** Add this as a pre-deploy command in your stack configuration:
+```bash
+docker compose run --rm zerotier-controller create-networks
+```
+
+**Important:** Run the `create-networks` script **before** deploying the stack or other stacks that depend on these networks. Networks only need to be created once and will persist across stack restarts.
 
 ### Typical Usage Pattern
 
@@ -133,23 +144,30 @@ Edit `.env` and set:
 
 **Leave `ZT_SECRET` empty for now** - we'll get it after first launch.
 
-### 2. Launch the Stack
+### 2. Create Docker Networks (One-Time Setup)
 
-The compose file automatically creates `zmesh-internal` and `zmesh-network` Docker networks with predictable names. No manual network creation is needed.
+Before deploying the stack, create the required Docker networks:
+
+```bash
+docker compose run --rm zerotier-controller create-networks
+```
+
+This creates `zmesh-internal` and `zmesh-network` with proper configuration. **This step is required** because the controller uses `network_mode: host` and cannot join Docker networks, so Docker Compose cannot auto-create them.
+
+### 3. Launch the Stack
 
 ```bash
 docker compose up -d
 ```
 
 **What happens on first boot:**
-- Docker Compose creates `zmesh-internal` and `zmesh-network` networks
-- All containers start and join their respective networks
-- The zerotier-controller entrypoint detects existing networks and configures routing
+- All containers start and join their respective networks (already created in step 2)
+- The zerotier-controller configures ZeroTier routing via `br-zmesh` bridge
 - Everything is ready to use
 
-**Important:** Launch this zerotier stack **first** before other stacks that need to join `zmesh-internal` or `zmesh-network`. This ensures the networks exist when other services reference them as external networks.
+**Important:** The `create-networks` step must be run **first** before this stack or other stacks that need to join `zmesh-internal` or `zmesh-network`. Networks only need to be created once.
 
-### 3. Get ZeroTier Secret
+### 4. Get ZeroTier Secret
 
 After containers start, get the auth token:
 
@@ -163,11 +181,11 @@ Add this value to `ZT_SECRET` in `.env`, then restart:
 docker compose down && docker compose up -d
 ```
 
-### 4. Access ZTNet Web UI
+### 5. Access ZTNet Web UI
 
 Navigate to your `NEXTAUTH_URL` and create your admin account.
 
-### 5. Create Your First Network
+### 6. Create Your First Network
 
 1. Log into ZTNet
 2. Create a new network
@@ -177,7 +195,7 @@ Navigate to your `NEXTAUTH_URL` and create your admin account.
    - Configure IP assignment range (e.g., `10.121.15.0/24`)
    - Add DNS entries for service discovery
 
-### 6. Get Your API Key & Configure CoreDNS
+### 7. Get Your API Key & Configure CoreDNS
 
 1. Go to User Settings in ZTNet
 2. Generate an API key
@@ -193,7 +211,7 @@ Navigate to your `NEXTAUTH_URL` and create your admin account.
 
 CoreDNS will now automatically discover all authorized network members and serve DNS at `*.zmesh`.
 
-### 7. Configure DNS for Other Services on Server A
+### 8. Configure DNS for Other Services on Server A
 
 CoreDNS runs on **both** the `zmesh-internal` network (with static IP `172.31.255.69`) and the `public` network. This allows any service on Server A to use CoreDNS for `.zmesh` service discovery.
 
@@ -219,7 +237,7 @@ services:
 
 This enables **DNS-based service discovery** - services on Server A can access ZeroTier network members by name without knowing their IPs.
 
-### 8. Configure Remote Clients
+### 9. Configure Remote Clients
 
 Point remote clients (laptops, desktops) to use this server's ZeroTier IP as DNS:
 
@@ -234,20 +252,22 @@ Now clients can access gateways by name: `curl http://mysite.zmesh`
 ## Setup Flow Summary
 
 ```
-1. Configure .env → 2. Launch stack (networks auto-created)
+1. Configure .env → 2. Create networks (docker compose run --rm zerotier-controller create-networks)
      ↓
-3. Get ZT_SECRET → 4. Restart with secret
+3. Launch stack (docker compose up -d)
      ↓
-5. Access web UI → 6. Create account → 7. Create network
+4. Get ZT_SECRET → 5. Restart with secret
      ↓
-8. Get API key → 9. Add to .env + restart → 10. CoreDNS auto-discovers members
+6. Access web UI → 7. Create account → 8. Create network
      ↓
-11. Configure Server A services (add DNS: 172.31.255.69 to docker-compose)
+9. Get API key → 10. Add to .env + restart → 11. CoreDNS auto-discovers members
      ↓
-12. Configure remote clients to use DNS
+12. Configure Server A services (add DNS: 172.31.255.69 to docker-compose)
+     ↓
+13. Configure remote clients to use DNS
 ```
 
-**Note:** Networks `zmesh-internal` and `zmesh-network` are created automatically by Docker Compose on first launch. No manual network creation commands are needed.
+**Note:** Networks `zmesh-internal` and `zmesh-network` must be created **before** launching the stack using the `create-networks` script. This is required because the controller uses `network_mode: host` and Docker Compose cannot auto-create networks for host-mode containers.
 
 ## Environment Variables
 

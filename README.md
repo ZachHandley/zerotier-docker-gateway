@@ -136,41 +136,52 @@ Clients:
 First, set up the ZeroTier network controller and DNS server:
 
 ```bash
-# 1. CRITICAL: Create the 'public' Docker network first
-docker network create public
-
-# 2. Deploy ZTNet + CoreDNS stack
+# 1. Deploy ZTNet + CoreDNS stack
 cd zerotier-controller/
 cp .env.example .env
 
 # Edit .env with your settings
 # See zerotier-controller/README.md for full setup guide
 
-# Start the stack
+# Start the stack - Docker Compose creates all networks automatically
 docker compose up -d
 
-# 3. Complete ZTNet setup (see zerotier-controller/README.md):
+# 2. Complete ZTNet setup (see zerotier-controller/README.md):
 #    - Get ZT_SECRET from controller
 #    - Create admin account
 #    - Create network and get NETWORK_ID
 #    - Generate API key
 #    - Update .env and restart
 
-# 4. Note Server A's ZeroTier IP
+# 3. Note Server A's ZeroTier IP
 docker exec zerotier-controller zerotier-cli listnetworks
 # Example: 10.147.17.1
 ```
 
 **Server A Auto-Network Creation:**
 
-The zerotier-controller uses a **custom image that automatically creates two Docker networks** on startup:
+Docker Compose **automatically creates all required networks** when you start the zerotier-controller stack. No manual network creation or bootstrap scripts needed!
 
-**1. `zmesh-internal` (172.31.255.0/24)** - Internal service communication
+**How it works:**
+1. **Docker Compose creates networks first** - Before starting any containers, Docker Compose creates all networks defined in the compose file
+2. **Uses `name:` attribute** - The compose file uses the `name:` attribute to prevent Docker from adding project prefixes (e.g., `public` stays `public`, not `zerotier-controller_public`)
+3. **Controller checks on startup** - The controller's entrypoint script checks if networks already exist and skips creation if found
+4. **Zero bootstrap needed** - No manual `docker network create` commands or separate scripts required
+
+**Networks created:**
+
+**1. `public`** - Standard external network for internet-facing services
+- Created by Docker Compose
+- Used for containers that need public internet access
+
+**2. `zmesh-internal` (172.31.255.0/24)** - Internal service communication
+- Created by Docker Compose with explicit subnet configuration
 - CoreDNS static IP: 172.31.255.69
 - For DNS resolution and internal stack services
 - Join this if your service needs to resolve `.zmesh` domains
 
-**2. `zmesh-network` (br-zmesh bridge)** - ZeroTier routing
+**3. `zmesh-network` (br-zmesh bridge)** - ZeroTier routing
+- Created by Docker Compose
 - Bridge interface for ZeroTier network access
 - Join this if your service needs to send/receive ZeroTier traffic
 
@@ -194,10 +205,13 @@ services:
 networks:
   public:
     external: true
+    name: public
   zmesh-internal:
-    external: true  # Created by zerotier-controller
+    external: true
+    name: zmesh-internal
   zmesh-network:
-    external: true  # Created by zerotier-controller
+    external: true
+    name: zmesh-network
 ```
 
 **How it works:**

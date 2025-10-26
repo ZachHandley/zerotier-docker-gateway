@@ -69,12 +69,12 @@ SITE_NAME=mysite
 # Get this from https://my.zerotier.com
 NETWORK_ID=abc123def456
 
-# Required: Services to expose
-ENDPOINTS=wordpress:80
+# Required: Services to expose with domains
+# Format: service:port_domain,service2:port2_domain2
+ENDPOINT_CONFIGS=wordpress:80_myblog.zmesh
 
 # Optional: Multiple services
-# ENDPOINTS=wordpress:80,phpmyadmin:80
-# DOMAINS=wp.zmesh,pma.zmesh
+# ENDPOINT_CONFIGS=wordpress:80_myblog.zmesh,phpmyadmin:80_pma.zmesh
 
 # SSL Configuration (keep false for ZeroTier-only)
 SSL_ENABLED=false
@@ -310,16 +310,20 @@ sudo crontab -e
 |----------|-------------|---------|
 | `SITE_NAME` | Unique identifier for this deployment | `mysite` |
 | `NETWORK_ID` | ZeroTier Network ID from my.zerotier.com | `abc123def456` |
+| `ENDPOINT_CONFIGS` | Services to proxy with domains (format: `service:port_domain,service2:port2_domain2`) | `wordpress:80_myblog.zmesh,pma:80_pma.zmesh` |
 
 ### Optional Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENDPOINTS` | `wordpress:80` | Services to proxy (format: `service:port,service2:port2`) |
-| `DOMAINS` | - | Custom domains per endpoint (comma-separated) |
 | `SSL_ENABLED` | `false` | Enable HTTPS (requires public domain) |
 | `DOMAIN` | - | Domain name for SSL |
 | `EMAIL` | - | Email for ACME/Let's Encrypt registration |
+
+### Key Features
+
+**Automatic Host Header Rewriting:**
+The gateway automatically rewrites the Host header to the domain specified in `ENDPOINT_CONFIGS`. This eliminates the need for custom Nginx Proxy Manager configurations or additional proxy settings. Each service receives requests with the correct Host header, making it seamless for applications that rely on domain-based configuration (like WordPress).
 
 ### Example Configurations
 
@@ -328,31 +332,37 @@ sudo crontab -e
 ```bash
 SITE_NAME=myblog
 NETWORK_ID=abc123def456
-ENDPOINTS=wordpress:80
+ENDPOINT_CONFIGS=wordpress:80_myblog.zmesh
 ```
 
 Access: `http://myblog.zmesh`
+
+The gateway will:
+- Proxy requests from `myblog.zmesh` to `wordpress:80`
+- Automatically rewrite the Host header to `myblog.zmesh`
+- WordPress will see the request as coming from `myblog.zmesh`
 
 #### Multiple Services
 
 ```bash
 SITE_NAME=myservices
 NETWORK_ID=abc123def456
-ENDPOINTS=wordpress:80,phpmyadmin:80,grafana:3000
-DOMAINS=blog.zmesh,pma.zmesh,monitoring.zmesh
+ENDPOINT_CONFIGS=wordpress:80_blog.zmesh,phpmyadmin:80_pma.zmesh,grafana:3000_monitoring.zmesh
 ```
 
 Access:
-- `http://blog.zmesh` → WordPress
-- `http://pma.zmesh` → phpMyAdmin
-- `http://monitoring.zmesh` → Grafana
+- `http://blog.zmesh` → WordPress (Host: blog.zmesh)
+- `http://pma.zmesh` → phpMyAdmin (Host: pma.zmesh)
+- `http://monitoring.zmesh` → Grafana (Host: monitoring.zmesh)
+
+Each service receives requests with its configured domain as the Host header.
 
 #### With SSL (Public Domain)
 
 ```bash
 SITE_NAME=myblog
 NETWORK_ID=abc123def456
-ENDPOINTS=wordpress:80
+ENDPOINT_CONFIGS=wordpress:80_blog.example.com
 SSL_ENABLED=true
 DOMAIN=blog.example.com
 EMAIL=admin@example.com
@@ -601,7 +611,7 @@ gateway:
   environment:
     - SITE_NAME=mysite
     - NETWORK_ID=abc123def456
-    - ENDPOINTS=wordpress:80
+    - ENDPOINT_CONFIGS=wordpress:80_mysite.zmesh
 ```
 
 **Benefits:**
@@ -672,7 +682,7 @@ services:
     environment:
       - SITE_NAME=myblog
       - NETWORK_ID=abc123def456
-      - ENDPOINTS=wordpress:80
+      - ENDPOINT_CONFIGS=wordpress:80_myblog.zmesh
       - GATEWAY_MODE=inbound
     volumes:
       - zt_data:/var/lib/zerotier-one
@@ -724,8 +734,7 @@ services:
     environment:
       - SITE_NAME=monitoring
       - NETWORK_ID=abc123def456
-      - ENDPOINTS=grafana:3000,prometheus:9090,alertmanager:9093
-      - DOMAINS=grafana.zmesh,prom.zmesh,alerts.zmesh
+      - ENDPOINT_CONFIGS=grafana:3000_grafana.zmesh,prometheus:9090_prom.zmesh,alertmanager:9093_alerts.zmesh
       - GATEWAY_MODE=inbound
     volumes:
       - zt_data:/var/lib/zerotier-one
@@ -779,9 +788,9 @@ Access:
 
 ### Q: Can I use a different domain than .zmesh?
 
-**A:** Yes, configure `DOMAINS` environment variable:
+**A:** Yes, specify the domain in the `ENDPOINT_CONFIGS` variable:
 ```bash
-DOMAINS=myblog.local,api.local
+ENDPOINT_CONFIGS=wordpress:80_myblog.local,api:3000_api.local
 ```
 
 ### Q: Does this work with Docker Swarm/Kubernetes?

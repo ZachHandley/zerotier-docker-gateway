@@ -1,8 +1,11 @@
 #!/bin/sh
 
 # Generate Caddyfile from environment variables
-# Format: ENDPOINTS=service1:port1,service2:port2,service3:port3
-# Optional: DOMAINS=domain1,domain2,domain3 (one per endpoint)
+#
+# PRIMARY FORMAT:
+#   ENDPOINT_CONFIGS=service:port_domain,service2:port2_domain2
+#   Example: ENDPOINT_CONFIGS=wordpress:80_thefunoffun.com,pma:80_pma.thefunoffun.com
+#
 # Optional: SSL_ENABLED=true|false (default: false)
 # Optional: EMAIL=admin@example.com (for ACME registration)
 # Optional: ZT_IP=10.x.x.x (binds to ZeroTier IP instead of all interfaces)
@@ -37,8 +40,17 @@ EOF
 EOF
     fi
 
-    if [ -z "$ENDPOINTS" ]; then
-        echo "No ENDPOINTS provided, using default reverse-proxy to wordpress:80"
+    # Determine which config format to use
+    if [ -n "$ENDPOINT_CONFIGS" ]; then
+        echo "Using new ENDPOINT_CONFIGS format..."
+        CONFIG_SOURCE="ENDPOINT_CONFIGS"
+        CONFIG_DATA="$ENDPOINT_CONFIGS"
+    elif [ -n "$ENDPOINTS" ]; then
+        echo "Using legacy ENDPOINTS format..."
+        CONFIG_SOURCE="ENDPOINTS"
+        CONFIG_DATA="$ENDPOINTS"
+    else
+        echo "No ENDPOINTS or ENDPOINT_CONFIGS provided, using default reverse-proxy to wordpress:80"
 
         if [ "$SSL_ENABLED" = "true" ] && [ -n "$URL" ]; then
             # HTTPS with domain
@@ -72,26 +84,40 @@ EOF
     OLD_IFS="$IFS"
     IFS=","
     counter=1
-    for endpoint in $ENDPOINTS; do
-        # Split endpoint by colon
-        service_name=$(echo "$endpoint" | cut -d':' -f1)
-        port=$(echo "$endpoint" | cut -d':' -f2)
-
-        # Get corresponding domain if provided
-        if [ -n "$DOMAINS" ]; then
-            domain=$(echo "$DOMAINS" | cut -d',' -f$counter)
+    for endpoint in $CONFIG_DATA; do
+        # Parse endpoint based on format
+        if [ "$CONFIG_SOURCE" = "ENDPOINT_CONFIGS" ]; then
+            # New format: service:port_domain
+            service_port=$(echo "$endpoint" | cut -d'_' -f1)
+            domain=$(echo "$endpoint" | cut -d'_' -f2)
+            service_name=$(echo "$service_port" | cut -d':' -f1)
+            port=$(echo "$service_port" | cut -d':' -f2)
         else
-            domain=""
+            # Legacy format: service:port
+            service_name=$(echo "$endpoint" | cut -d':' -f1)
+            port=$(echo "$endpoint" | cut -d':' -f2)
+
+            # Get corresponding domain if provided
+            if [ -n "$DOMAINS" ]; then
+                domain=$(echo "$DOMAINS" | cut -d',' -f$counter)
+            elif [ -n "$DOMAIN" ]; then
+                # Fallback to single DOMAIN for all endpoints
+                domain="$DOMAIN"
+            else
+                domain=""
+            fi
         fi
 
-        echo "Generating config for $service_name:$port (SSL: $SSL_ENABLED)"
+        echo "Generating config for $service_name:$port (domain: ${domain:-none}, SSL: $SSL_ENABLED)"
 
-        # Generate Caddy block
+        # Generate Caddy block with host header rewriting if domain is set
         if [ "$SSL_ENABLED" = "true" ] && [ -n "$domain" ] && [ "$domain" != "" ]; then
             # HTTPS with specific domain (Caddy auto-handles certificates)
             cat >> "$CADDYFILE_PATH" << EOF
 $domain {
-    reverse_proxy $service_name:$port
+    reverse_proxy $service_name:$port {
+        header_up Host {host}
+    }
 }
 
 EOF
@@ -99,20 +125,24 @@ EOF
             # HTTPS with URL from env
             cat >> "$CADDYFILE_PATH" << EOF
 $URL {
-    reverse_proxy $service_name:$port
+    reverse_proxy $service_name:$port {
+        header_up Host {host}
+    }
 }
 
 EOF
         elif [ -n "$domain" ] && [ "$domain" != "" ]; then
-            # HTTP only with specific domain
+            # HTTP only with specific domain - rewrite Host header
             cat >> "$CADDYFILE_PATH" << EOF
 http://$domain {
-    reverse_proxy $service_name:$port
+    reverse_proxy $service_name:$port {
+        header_up Host $domain
+    }
 }
 
 EOF
         else
-            # HTTP only, listen on port 80
+            # HTTP only, listen on port 80 (ZT IP or all interfaces)
             if [ -n "$BIND_ADDR" ]; then
                 cat >> "$CADDYFILE_PATH" << EOF
 ${BIND_ADDR}:80 {

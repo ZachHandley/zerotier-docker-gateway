@@ -249,7 +249,7 @@ cp .env.example .env
 # 2. Configure .env
 SITE_NAME=mysite              # Becomes mysite.zmesh
 NETWORK_ID=your_network_id
-ENDPOINTS=wordpress:80        # Services to expose
+ENDPOINT_CONFIGS=wordpress:80_mysite.zmesh        # Services to expose with domains
 
 # 3. Start gateway
 docker-compose up -d
@@ -309,11 +309,46 @@ http://mysite.zmesh
 | `SITE_NAME` | Yes | - | Hostname for DNS discovery (becomes `<name>.zmesh`) |
 | `NETWORK_IDS` | Yes | - | ZeroTier network ID(s), semicolon-separated |
 | `GATEWAY_MODE` | Yes | `inbound` | `inbound` (ZT→Docker), `outbound` (Docker→ZT), `both` |
-| `ENDPOINTS` | No | `wordpress:80` | Services to proxy: `service:port,service2:port2` |
-| `DOMAINS` | No | - | Custom domains per endpoint (comma-separated) |
+| `ENDPOINT_CONFIGS` | No | `wordpress:80_wordpress.zmesh` | Services to proxy: `service:port_domain,service2:port2_domain2`. Gateway automatically rewrites Host headers for WordPress compatibility. |
 | `SSL_ENABLED` | No | `false` | Enable HTTPS (requires public domain) |
 | `URL` | No | - | Domain for SSL |
 | `EMAIL` | No | - | Email for ACME registration |
+
+### ENDPOINT_CONFIGS Format
+
+The `ENDPOINT_CONFIGS` environment variable defines which services the gateway should expose and on which domains.
+
+**Format:** `service:port_domain,service2:port2_domain2`
+
+**Examples:**
+
+```bash
+# Single service
+ENDPOINT_CONFIGS=wordpress:80_mysite.zmesh
+
+# Multiple services with subdomains
+ENDPOINT_CONFIGS=wordpress:80_mysite.zmesh,phpmyadmin:80_pma.mysite.zmesh
+
+# Real-world multi-service example
+ENDPOINT_CONFIGS=wordpress:80_thefunoffun.com,pma:80_pma.thefunoffun.com
+```
+
+**Key Features:**
+
+1. **Domain-based routing:** Caddy routes traffic based on the Host header
+2. **Automatic Host header rewriting:** Gateway automatically rewrites Host headers for WordPress compatibility
+3. **Flexible domains:** Use `.zmesh` domains for internal access or real domains for public-facing sites
+4. **Multiple services:** Separate multiple endpoints with commas
+
+**WordPress Compatibility:**
+
+The gateway automatically handles WordPress's requirement for consistent Host headers. When traffic arrives at the gateway, it:
+1. Matches the incoming Host header to the configured domain
+2. Routes to the appropriate backend service
+3. Rewrites the Host header to match what WordPress expects
+4. WordPress receives the correct domain and generates proper URLs
+
+This eliminates the need to manually configure WordPress's `WP_HOME` and `WP_SITEURL` constants.
 
 ### Example docker-compose.yml
 
@@ -350,7 +385,7 @@ services:
       - SITE_NAME=${SITE_NAME}
       - NETWORK_IDS=${NETWORK_ID}
       - GATEWAY_MODE=inbound
-      - ENDPOINTS=wordpress:80
+      - ENDPOINT_CONFIGS=wordpress:80_mysite.zmesh
     volumes:
       - zt_data:/var/lib/zerotier-one
       - caddy_data:/data/caddy
@@ -372,6 +407,8 @@ volumes:
 - Gateway automatically joins ZeroTier network and gets an IP
 - No manual route configuration needed - ZeroTier routes between members automatically
 - Services are accessed via `<SITE_NAME>.zmesh` domain
+- `ENDPOINT_CONFIGS` format: `service:port_domain` - domain should match DNS resolution
+- Gateway automatically rewrites Host headers for WordPress compatibility
 
 ---
 
@@ -455,9 +492,10 @@ project-grafana/
 ```yaml
 gateway:
   environment:
-    - ENDPOINTS=wordpress:80,phpmyadmin:80,grafana:3000
-    - DOMAINS=wp.zmesh,pma.zmesh,grafana.zmesh
+    - ENDPOINT_CONFIGS=wordpress:80_mysite.zmesh,phpmyadmin:80_pma.mysite.zmesh,grafana:3000_grafana.mysite.zmesh
 ```
+
+**Note:** Each endpoint includes its domain in the configuration. The gateway automatically configures Caddy to route traffic based on the Host header and rewrites headers for WordPress compatibility.
 
 ---
 
@@ -469,7 +507,10 @@ gateway:
 2. ZeroTier assigns an IP automatically (e.g., 10.147.17.5)
 3. Gateway sets hostname from `SITE_NAME` environment variable
 4. Gateway configures iptables routing between ZT ↔ Docker network
-5. Gateway generates Caddyfile from `ENDPOINTS` and starts Caddy
+5. Gateway generates Caddyfile from `ENDPOINT_CONFIGS` and starts Caddy
+   - Parses format: `service:port_domain`
+   - Configures domain-based routing with Host header matching
+   - Automatically rewrites Host headers for WordPress compatibility
 6. Ready to serve requests!
 
 ### CoreDNS Discovery Flow
@@ -577,7 +618,7 @@ docker exec <gateway> iptables -L -n -v
 docker network inspect <project>_internal
 ```
 
-**Solution:** Ensure `ENDPOINTS` is configured correctly and services are on the same Docker network as gateway.
+**Solution:** Ensure `ENDPOINT_CONFIGS` is configured correctly and services are on the same Docker network as gateway.
 
 ### CoreDNS Issues
 
@@ -640,9 +681,10 @@ zerotier-cli listnetworks
 Gateway is reachable but Caddy isn't proxying correctly.
 
 Check:
-1. Is `ENDPOINTS` configured?
+1. Is `ENDPOINT_CONFIGS` configured correctly?
 2. Are backend services running?
 3. Are backend services on same Docker network?
+4. Does the domain in `ENDPOINT_CONFIGS` match what you're accessing?
 
 ```bash
 # Check Caddy config
@@ -650,6 +692,10 @@ docker exec <gateway> cat /etc/caddy/Caddyfile
 
 # Test backend directly from gateway
 docker exec <gateway> wget -O- http://wordpress:80
+
+# Verify ENDPOINT_CONFIGS format
+# Should be: service:port_domain (e.g., wordpress:80_mysite.zmesh)
+docker exec <gateway> env | grep ENDPOINT_CONFIGS
 ```
 
 ---

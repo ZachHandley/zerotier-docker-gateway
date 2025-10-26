@@ -18,6 +18,22 @@ trap 'cleanup' SIGTERM SIGINT
 
 echo "=== Starting ZeroTier + Caddy Gateway ==="
 
+# Handle network IDs - support both NETWORK_IDS and NETWORK_ID variables
+# The base zerotier-gateway image expects ZEROTIER_ONE_NETWORK_IDS
+if [ -n "$NETWORK_IDS" ]; then
+    export ZEROTIER_ONE_NETWORK_IDS="$NETWORK_IDS"
+    echo "Using NETWORK_IDS: $NETWORK_IDS"
+elif [ -n "$NETWORK_ID" ]; then
+    export ZEROTIER_ONE_NETWORK_IDS="$NETWORK_ID"
+    echo "Using NETWORK_ID: $NETWORK_ID"
+else
+    echo "WARNING: No NETWORK_IDS or NETWORK_ID specified. Gateway will not auto-join any networks."
+fi
+
+if [ -n "$ZEROTIER_ONE_NETWORK_IDS" ]; then
+    echo "ZeroTier will auto-join network(s): $ZEROTIER_ONE_NETWORK_IDS"
+fi
+
 # Start ZeroTier gateway in the background
 echo "Starting ZeroTier gateway..."
 /usr/sbin/main.sh &
@@ -44,8 +60,28 @@ while [ $TRY_COUNT -lt $RETRY_COUNT ]; do
 done
 
 # Display ZeroTier network info
+echo "=== ZeroTier Status ==="
 zerotier-cli info
+echo ""
+echo "=== Joined Networks ==="
 zerotier-cli listnetworks
+echo ""
+
+# Verify network join if ZEROTIER_ONE_NETWORK_IDS was set
+if [ -n "$ZEROTIER_ONE_NETWORK_IDS" ]; then
+    echo "=== Verifying Network Join ==="
+    IFS=';' read -ra NETWORK_ARRAY <<< "$ZEROTIER_ONE_NETWORK_IDS"
+    for network_id in "${NETWORK_ARRAY[@]}"; do
+        network_id=$(echo "$network_id" | xargs) # trim whitespace
+        if zerotier-cli listnetworks | grep -q "$network_id"; then
+            echo "✓ Successfully joined network: $network_id"
+        else
+            echo "✗ WARNING: Failed to join network: $network_id"
+            echo "  Check that the network exists and gateway is authorized"
+        fi
+    done
+    echo ""
+fi
 
 # Detect ZeroTier IP for Caddy to bind to
 echo "Detecting ZeroTier IP address..."

@@ -39,7 +39,7 @@ Before starting the stack for the first time, you must create the required Docke
 
 ```bash
 # From the zerotier-controller directory
-docker compose run --rm zerotier-controller create-networks
+docker compose run --rm znetwork-creator
 ```
 
 This creates:

@@ -32,3 +32,4 @@ Thumbs.db
 
 # Claude sessions (optional - remove if you want to track sessions)
 .claude/
+tmp

@@ -2,6 +2,56 @@
 
 Self-hosted ZeroTier network controller with ZTNet web UI and automatic DNS discovery via CoreDNS.
 
+## zmesh-network Auto-Routing
+
+This custom ZeroTier controller image automatically creates and manages a Docker network called `zmesh-network` that provides seamless ZeroTier access to any container that joins it.
+
+### Key Features
+
+- **Automatic Network Creation**: Creates `zmesh-network` Docker bridge with predictable name `br-zmesh`
+- **Zero Configuration**: No manual bridge name configuration needed
+- **Automatic Routing**: Services joining `zmesh-network` get instant ZeroTier access
+- **Universal Compatibility**: Works with any Docker Compose stack on the same host
+
+### How It Works
+
+1. **Custom Image**: Extends `zyclonite/zerotier:router` with Docker CLI and custom entrypoint
+2. **Network Creation**: `entrypoint-zmesh.sh` creates `zmesh-network` with explicit bridge name `br-zmesh`
+3. **Automatic Routing**: Adds `br-zmesh` to `ZEROTIER_ONE_LOCAL_PHYS` for ZeroTier routing
+4. **Service Integration**: Any container joining `zmesh-network` routes through ZeroTier automatically
+
+### Usage Example
+
+Add `zmesh-network` to any Docker Compose service on the same host:
+
+```yaml
+services:
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    networks:
+      - public          # External connectivity
+      - zmesh-network   # ZeroTier access
+    # ... rest of config ...
+
+networks:
+  public:
+    external: true
+  zmesh-network:
+    external: true      # Network created by zerotier-controller
+```
+
+Now `nginx-proxy-manager` can access all ZeroTier network members directly, and vice versa - all ZeroTier members can reach services on this container.
+
+### Building the Image
+
+The custom image is built automatically when using `docker compose up`:
+
+```bash
+docker compose build zerotier-controller
+```
+
+This creates the local image `zerotier-router-zmesh:latest` with all the necessary routing configuration.
+
 ## Quick Start
 
 > **IMPORTANT:** Before deploying the controller, you must create the `public` Docker network:

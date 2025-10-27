@@ -1,7 +1,7 @@
 FROM bfg100k/zerotier-gateway:latest
 
-# Install Caddy for reverse proxying
-RUN apk add --no-cache caddy
+# Install Caddy for reverse proxying and curl for ZTNet planet downloads
+RUN apk add --no-cache caddy curl
 
 # Copy config generator and custom entrypoint
 COPY generate-caddyfile.sh /usr/local/bin/generate-caddyfile.sh

@@ -105,6 +105,20 @@ done
 echo "=== ZeroTier Status ==="
 zerotier-cli info
 echo ""
+
+# Explicitly join networks (don't rely on base image)
+if [ -n "$ZEROTIER_ONE_NETWORK_IDS" ]; then
+    echo "=== Joining ZeroTier Networks ==="
+    IFS=';' read -ra NETWORK_ARRAY <<< "$ZEROTIER_ONE_NETWORK_IDS"
+    for network_id in "${NETWORK_ARRAY[@]}"; do
+        network_id=$(echo "$network_id" | xargs) # trim whitespace
+        echo "Joining network: $network_id..."
+        zerotier-cli join "$network_id"
+        sleep 2  # Give it a moment to process
+    done
+    echo ""
+fi
+
 echo "=== Joined Networks ==="
 zerotier-cli listnetworks
 echo ""

@@ -34,6 +34,48 @@ if [ -n "$ZEROTIER_ONE_NETWORK_IDS" ]; then
     echo "ZeroTier will auto-join network(s): $ZEROTIER_ONE_NETWORK_IDS"
 fi
 
+# Download custom planet file from ZTNet if configured
+if [ -n "$ZTNET_URL" ] && [ -n "$ZERO_API_KEY" ]; then
+    PLANET_FILE="/var/lib/zerotier-one/planet"
+    PLANET_URL="${ZTNET_URL}/api/planet"
+    PLANET_TEMP="/tmp/planet.new"
+
+    # Download to temp location first
+    echo "Checking for ZTNet planet file updates..."
+    curl -sSf -H "X-ZTNet-API-Key: ${ZERO_API_KEY}" \
+         -o "$PLANET_TEMP" \
+         "${PLANET_URL}"
+
+    if [ $? -eq 0 ]; then
+        # Check if planet file exists and compare
+        if [ -f "$PLANET_FILE" ]; then
+            OLD_HASH=$(md5sum "$PLANET_FILE" | cut -d' ' -f1)
+            NEW_HASH=$(md5sum "$PLANET_TEMP" | cut -d' ' -f1)
+
+            if [ "$OLD_HASH" = "$NEW_HASH" ]; then
+                echo "✓ Planet file is up to date (skipping download)"
+                rm "$PLANET_TEMP"
+            else
+                mv "$PLANET_TEMP" "$PLANET_FILE"
+                echo "✓ Planet file updated (changed from previous version)"
+            fi
+        else
+            mv "$PLANET_TEMP" "$PLANET_FILE"
+            echo "✓ Custom planet file installed"
+        fi
+    else
+        echo "✗ Failed to download planet file"
+        if [ ! -f "$PLANET_FILE" ]; then
+            echo "  WARNING: No planet file available - using public ZeroTier"
+        else
+            echo "  Using existing planet file"
+        fi
+        rm -f "$PLANET_TEMP"
+    fi
+elif [ -n "$ZTNET_URL" ] || [ -n "$ZERO_API_KEY" ]; then
+    echo "⚠ WARNING: Both ZTNET_URL and ZERO_API_KEY must be set to use custom ZTNet controller"
+fi
+
 # Start ZeroTier gateway in the background
 echo "Starting ZeroTier gateway..."
 /usr/sbin/main.sh &

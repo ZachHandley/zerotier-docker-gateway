@@ -144,9 +144,37 @@ echo "Detecting ZeroTier IP address..."
 ZT_IP=$(zerotier-cli listnetworks | grep OK | awk '{print $9}' | cut -d'/' -f1)
 
 if [ -z "$ZT_IP" ]; then
-    echo "ERROR: Could not detect ZeroTier IP address"
-    echo "Network may not be fully ready or authorized"
-    exit 1
+    echo "⚠ WARNING: Could not detect ZeroTier IP address"
+    echo "  Network status: $(zerotier-cli listnetworks | grep -v '^200 listnetworks$' | awk '{print $4}')"
+    echo "  This is normal if the node hasn't been authorized yet."
+    echo "  Please authorize this node in your ZTNet controller."
+    echo "  Container will keep trying..."
+
+    # Wait for authorization instead of exiting
+    echo ""
+    echo "Waiting for network authorization (checking every 10 seconds)..."
+    MAX_WAIT=300  # Wait up to 5 minutes
+    WAITED=0
+    while [ -z "$ZT_IP" ] && [ $WAITED -lt $MAX_WAIT ]; do
+        sleep 10
+        WAITED=$((WAITED + 10))
+        ZT_IP=$(zerotier-cli listnetworks | grep OK | awk '{print $9}' | cut -d'/' -f1)
+        if [ -n "$ZT_IP" ]; then
+            echo "✓ Network authorized! IP address received."
+            break
+        fi
+        echo "  Still waiting... (${WAITED}s / ${MAX_WAIT}s)"
+    done
+
+    if [ -z "$ZT_IP" ]; then
+        echo ""
+        echo "ERROR: Timeout waiting for network authorization"
+        echo "Please check:"
+        echo "  1. Network exists in ZTNet: 97f26fe8b835c5f3"
+        echo "  2. Node is authorized in ZTNet"
+        echo "  3. Network has available IP addresses"
+        exit 1
+    fi
 fi
 
 echo "ZeroTier IP detected: $ZT_IP"
